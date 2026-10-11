@@ -25,6 +25,10 @@ npm start
 
 Open `http://localhost:3000/`. Use the same browser profile and origin to retain the same IndexedDB library. Run automated tests with `npm test`.
 
+## Deploy on Render
+
+Create a Render Web Service from this repository using the included `render.yaml` Blueprint. The service starts with `npm start`, listens on Render's `PORT`, and binds to `0.0.0.0` when a deployment port is provided. If configuring the service manually, set the start command to `npm start` and ensure the app is allowed to bind to `0.0.0.0`.
+
 ## Saving webpage media
 
 Choose **Add → Save URL(s)** and paste a webpage or public social-media post URL. **Save URLs** saves it directly as a bookmark without fetching or showing a preview. Choose **View preview** when you want Grabit's Node server to fetch publicly accessible page HTML and extract recognized metadata, image URLs, and video URLs. Public Instagram posts/reels, Facebook posts/videos, Pinterest pins, TikTok videos, YouTube, Vimeo, and X/Twitter posts can also be saved through provider embeds when static media extraction is unavailable and the provider permits embedding. The preview uses a Pinterest-style media grid; choose which media to save, or explicitly hide media so it remains hidden on future previews of that page in this browser.

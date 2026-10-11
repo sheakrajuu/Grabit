@@ -4,7 +4,7 @@ import {fileURLToPath} from 'node:url';
 import {downloadPublicMedia,extractPage,safeDownloadFilename} from './server/extractor.js';
 
 const root=path.dirname(fileURLToPath(import.meta.url));
-const host=process.env.HOST||'127.0.0.1';
+const host=process.env.HOST||(process.env.PORT?'0.0.0.0':'127.0.0.1');
 const port=Number(process.env.PORT||3000);
 const MAX_BODY_BYTES=16*1024;
 const RATE_WINDOW_MS=60_000;
