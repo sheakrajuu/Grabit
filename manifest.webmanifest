@@ -12,16 +12,22 @@
   "categories": ["productivity", "photo", "video"],
   "icons": [
     {
-      "src": "./icons/grabit-192.png",
+      "src": "./icons/android/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "./icons/grabit-512.png",
+      "src": "./icons/android/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
+    },
+    {
+      "src": "./icons/git.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
     }
   ]
 }

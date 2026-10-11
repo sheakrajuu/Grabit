@@ -40,6 +40,6 @@ async function loadLibrary(){
 async function storeItem(item){const tx=db.transaction('items','readwrite');await request(tx.objectStore('items').put(item));await txDone(tx)}
 async function storeSection(section){const tx=db.transaction('sections','readwrite');await request(tx.objectStore('sections').put(section));await txDone(tx)}
 async function removeItem(id){const tx=db.transaction('items','readwrite');await request(tx.objectStore('items').delete(id));await txDone(tx)}
-async function removeSection(id){const tx=db.transaction(['sections','items'],'readwrite');await request(tx.objectStore('sections').delete(id));const all=await request(tx.objectStore('items').getAll());for(const item of all){if(item.sectionIds.includes(id)){item.sectionIds=item.sectionIds.filter(x=>x!==id);item.inbox=!item.sectionIds.length;item.updatedAt=new Date().toISOString();await request(tx.objectStore('items').put(item))}}await txDone(tx)}
+async function removeSection(id){const tx=db.transaction(['sections','items'],'readwrite');await request(tx.objectStore('sections').delete(id));const all=await request(tx.objectStore('items').getAll());for(const item of all){if(item.sectionIds.includes(id)){item.sectionIds=item.sectionIds.filter(x=>x!==id);item.inbox=!item.sectionIds.length;if(!item.sectionIds.length)item.hiddenFromAll=false;item.updatedAt=new Date().toISOString();await request(tx.objectStore('items').put(item))}}await txDone(tx)}
 
 export {openDB,migrateLegacy,loadLibrary,storeItem,storeSection,removeItem,removeSection};

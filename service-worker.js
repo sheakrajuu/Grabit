@@ -1,28 +1,31 @@
-const CACHE_NAME='grabit-shell-v27';
+const CACHE_NAME='grabit-shell-v30';
 const APP_SHELL=[
  './',
  './library.html',
  './manifest.webmanifest',
- './css/styles.css?v=27',
- './js/app.js?v=27',
+ './css/styles.css?v=30',
+ './js/app.js?v=30',
  './js/importer.js',
  './js/storage.js',
  './js/utils.js',
- './icons/grabit.svg',
- './icons/grabit-192.png',
- './icons/grabit-512.png',
- './icons/grabit-192.svg',
- './icons/grabit-512.svg'
+ './icons/git.svg',
+ './icons/android/icon-192.png',
+ './icons/android/icon-512.png',
+ './icons/apple/AppIcon-180.png'
 ];
 
 self.addEventListener('install',event=>{
- event.waitUntil(caches.open(CACHE_NAME).then(cache=>cache.addAll(APP_SHELL)));
- self.skipWaiting();
+ event.waitUntil(Promise.all([
+  caches.open(CACHE_NAME).then(cache=>cache.addAll(APP_SHELL)),
+  self.skipWaiting()
+ ]));
 });
 
 self.addEventListener('activate',event=>{
- event.waitUntil(caches.keys().then(names=>Promise.all(names.filter(name=>name.startsWith('grabit-shell-')&&name!==CACHE_NAME).map(name=>caches.delete(name)))));
- self.clients.claim();
+ event.waitUntil(Promise.all([
+  caches.keys().then(names=>Promise.all(names.filter(name=>name.startsWith('grabit-shell-')&&name!==CACHE_NAME).map(name=>caches.delete(name)))),
+  self.clients.claim()
+ ]));
 });
 
 self.addEventListener('fetch',event=>{
@@ -35,15 +38,12 @@ self.addEventListener('fetch',event=>{
   }).catch(()=>caches.match('./library.html')));
   return;
  }
- if(/\.(?:css|js|webmanifest)$/.test(url.pathname)){
+ const appShellAsset=/\/(?:library\.html|manifest\.webmanifest|css\/styles\.css|js\/(?:app|importer|storage|utils)\.js|icons\/(?:git\.svg|android\/icon-(?:192|512)\.png|apple\/AppIcon-180\.png))$/.test(url.pathname);
+ if(appShellAsset){
   event.respondWith(fetch(request).then(response=>{
    if(response.ok&&response.type==='basic'){const copy=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put(request,copy))}
    return response;
   }).catch(()=>caches.match(request)));
   return;
  }
- event.respondWith(caches.match(request).then(cached=>cached||fetch(request).then(response=>{
-  if(response.ok&&response.type==='basic'){const copy=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put(request,copy))}
-  return response;
- })));
 });

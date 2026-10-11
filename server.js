@@ -1,7 +1,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {downloadPublicMedia,extractPage,safeDownloadFilename} from './server/extractor.js';
+import {extractPage,openPublicMedia,safeDownloadFilename} from './server/extractor.js';
 
 const root=path.dirname(fileURLToPath(import.meta.url));
 const host=process.env.HOST||(process.env.PORT?'0.0.0.0':'127.0.0.1');
@@ -67,18 +67,22 @@ const server=http.createServer(async(request,response)=>{
   return;
  }
  if(url.pathname==='/api/download'){
-  if(request.method!=='POST'){send(response,405,{error:'Use POST to download media.'});return}
+  if(!['GET','POST'].includes(request.method)){send(response,405,{error:'Use GET or POST to download media.'});return}
   if(!allowDownload(request)){send(response,429,{error:'Too many downloads. Wait a minute and retry.'});return}
   try{
-   const payload=await readJson(request);
-   if(typeof payload.url!=='string'||payload.url.length>2048){send(response,400,{error:'Provide a valid media URL shorter than 2048 characters.'});return}
-   const result=await downloadPublicMedia(payload.url);
+   const mediaUrl=request.method==='GET'?url.searchParams.get('url'):((await readJson(request)).url);
+   if(typeof mediaUrl!=='string'||mediaUrl.length>2048){send(response,400,{error:'Provide a valid media URL shorter than 2048 characters.'});return}
+   const result=await openPublicMedia(mediaUrl);
    let filename=safeDownloadFilename(result.filename);
    const extensions={'image/jpeg':'.jpg','image/png':'.png','image/gif':'.gif','image/webp':'.webp','image/avif':'.avif','image/svg+xml':'.svg','video/mp4':'.mp4','video/webm':'.webm','video/quicktime':'.mov','audio/mpeg':'.mp3','audio/mp4':'.m4a','audio/ogg':'.ogg','audio/wav':'.wav'};
    if(!path.extname(filename)&&extensions[result.contentType])filename+=extensions[result.contentType];
-   response.writeHead(200,{'content-type':result.contentType,'content-length':result.body.length,'content-disposition':`attachment; filename="${filename.replace(/["\\]/g,'_')}"; filename*=UTF-8''${encodeURIComponent(filename)}`,'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'});
-   response.end(result.body);
-  }catch(error){send(response,error.status||422,{error:error.message||'Media download failed.'})}
+   const headers={'content-type':result.contentType,'content-disposition':`attachment; filename="${filename.replace(/["\\]/g,'_')}"; filename*=UTF-8''${encodeURIComponent(filename)}`,'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'};
+   if(/^\d+$/.test(String(result.contentLength||'')))headers['content-length']=result.contentLength;
+   response.writeHead(200,headers);
+   response.on('close',()=>{if(!response.writableFinished)result.stream.destroy()});
+   result.stream.on('error',error=>{console.error('Media download stream failed:',error);response.destroy(error)});
+   result.stream.pipe(response);
+  }catch(error){if(response.headersSent){response.destroy(error)}else send(response,error.status||422,{error:error.message||'Media download failed.'})}
   return;
  }
  if(request.method!=='GET'&&request.method!=='HEAD'){response.writeHead(405,{'allow':'GET, HEAD'}).end();return}

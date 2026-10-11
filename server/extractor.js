@@ -5,7 +5,6 @@ import net from 'node:net';
 import {createBrotliDecompress,createGunzip,createInflate} from 'node:zlib';
 
 const MAX_HTML_BYTES=6*1024*1024;
-const MAX_DOWNLOAD_BYTES=50*1024*1024;
 const MAX_MEDIA=500;
 const REQUEST_TIMEOUT_MS=9000;
 const MAX_REDIRECTS=5;
@@ -92,7 +91,7 @@ function addMedia(target,seen,entry,count){
 }
 
 export function parsePage(html,pageUrl,limit=MAX_MEDIA){
- const titleMeta=[];const descriptionMeta=[];const imageCandidates=[];const videoCandidates=[];const seenImages=new Set();const seenVideos=new Set();const imageCount={value:0};const videoCount={value:0};
+ const titleMeta=[];const descriptionMeta=[];const metaImageCandidates=[];const imageCandidates=[];const videoCandidates=[];const seenMetaImages=new Set();const seenImages=new Set();const seenVideos=new Set();const metaImageCount={value:0};const imageCount={value:0};const videoCount={value:0};
  let canonicalUrl=pageUrl;
  for(const match of html.matchAll(/<(meta|link)\b[^>]*>/gi)){
   const tag=match[0];const attrs=attributes(tag);const key=(attrs.property||attrs.name||attrs.itemprop||'').toLowerCase();const rel=(attrs.rel||'').toLowerCase();
@@ -100,7 +99,7 @@ export function parsePage(html,pageUrl,limit=MAX_MEDIA){
   if(match[1].toLowerCase()!=='meta')continue;
   if(['og:title','twitter:title','title'].includes(key)&&attrs.content)titleMeta.push(attrs.content);
   if(['og:description','twitter:description','description'].includes(key)&&attrs.content)descriptionMeta.push(attrs.content);
-  if(['og:image','og:image:url','og:image:secure_url','twitter:image','twitter:image:src','twitter:image:secure_url','image'].includes(key)){const url=publicMediaUrl(attrs.content,pageUrl);if(url)addMedia(imageCandidates,seenImages,{url,alt:'',thumbnailUrl:url},imageCount)}
+  if(['og:image','og:image:url','og:image:secure_url','twitter:image','twitter:image:src','twitter:image:secure_url','image'].includes(key)){const url=publicMediaUrl(attrs.content,pageUrl);if(url)addMedia(metaImageCandidates,seenMetaImages,{url,alt:'',thumbnailUrl:url},metaImageCount)}
   if(['og:video','og:video:url','og:video:secure_url','twitter:player:stream'].includes(key)){const url=publicMediaUrl(attrs.content,pageUrl);if(url)addMedia(videoCandidates,seenVideos,{url,thumbnailUrl:''},videoCount)}
   if(key==='og:video'&&attrs.content){const image=publicMediaUrl(attrs['data-thumbnail'],pageUrl);if(image&&videoCandidates.length)videoCandidates.at(-1).thumbnailUrl=image}
  }
@@ -115,18 +114,21 @@ export function parsePage(html,pageUrl,limit=MAX_MEDIA){
    const candidates=responsive?[]:[attrs['data-original'],attrs['data-lazy-src'],attrs['data-src'],attrs['data-url'],attrs.src];
    for(const value of candidates){const url=publicMediaUrl(value,pageUrl);if(url)addMedia(imageCandidates,seenImages,{url,alt,thumbnailUrl:url,width:Number(attrs.width)||undefined,height:Number(attrs.height)||undefined},imageCount)}
   }
-  if(name==='video'&&attrs.src){const url=publicMediaUrl(attrs.src,pageUrl);if(url)addMedia(videoCandidates,seenVideos,{url,thumbnailUrl:poster||'',...(Number(attrs.width)>0?{width:Number(attrs.width)}:{}),...(Number(attrs.height)>0?{height:Number(attrs.height)}:{})},videoCount)}
+  if(name==='video'&&attrs.src){const url=publicMediaUrl(attrs.src,pageUrl);if(url){addMedia(videoCandidates,seenVideos,{url,thumbnailUrl:poster||'',...(Number(attrs.width)>0?{width:Number(attrs.width)}:{}),...(Number(attrs.height)>0?{height:Number(attrs.height)}:{})},videoCount);const existing=videoCandidates.find(entry=>entry.url===url);if(existing&&!existing.thumbnailUrl)existing.thumbnailUrl=poster||''}}
   if(name==='source'){
    const parentVideo=html.slice(Math.max(0,match.index-700),match.index).match(/<video\b[^>]*>/gi)?.at(-1);
-   if(parentVideo){const parent=attributes(parentVideo);const url=publicMediaUrl(attrs.src,pageUrl);const thumbnailUrl=publicMediaUrl(parent.poster,pageUrl);const width=Number(attrs.width)||Number(parent.width),height=Number(attrs.height)||Number(parent.height);if(url)addMedia(videoCandidates,seenVideos,{url,thumbnailUrl:thumbnailUrl||'',...(width>0?{width}:{}),...(height>0?{height}:{})},videoCount)}
+   if(parentVideo){const parent=attributes(parentVideo);const url=publicMediaUrl(attrs.src,pageUrl);const thumbnailUrl=publicMediaUrl(parent.poster,pageUrl);const width=Number(attrs.width)||Number(parent.width),height=Number(attrs.height)||Number(parent.height);if(url){addMedia(videoCandidates,seenVideos,{url,thumbnailUrl:thumbnailUrl||'',...(width>0?{width}:{}),...(height>0?{height}:{})},videoCount);const existing=videoCandidates.find(entry=>entry.url===url);if(existing&&!existing.thumbnailUrl)existing.thumbnailUrl=thumbnailUrl||''}}
   }
  }
  const jsonLd=html.match(/<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script\s*>/i);
  if(jsonLd&&titleMeta.length===0){try{const data=JSON.parse(jsonLd[1]);const first=Array.isArray(data)?data[0]:data;if(first?.headline||first?.name)titleMeta.push(String(first.headline||first.name))}catch{}}
  const textTitle=titleMeta.map(x=>cleanText(x,240)).find(Boolean)||cleanText(titleTag?.[1],240)||new URL(pageUrl).hostname;
  const pageTitle=textTitle.split(/\s+[|–—]\s+/)[0].trim()||textTitle;
- const media=[...imageCandidates.slice(0,limit).map(entry=>({type:'image',...entry})),...videoCandidates.slice(0,limit-imageCandidates.length).map(entry=>({type:'video',...entry}))].slice(0,limit);
- return{title:pageTitle,description:descriptionMeta.map(x=>cleanText(x,1500)).find(Boolean)||'',canonicalUrl,media,mediaCount:media.length,truncated:imageCount.value+videoCount.value>limit};
+ const images=videoCount.value>1?[]:imageCandidates.length?imageCandidates:videoCandidates.length?[]:metaImageCandidates;
+ const videos=videoCandidates.slice(0,limit);
+ const media=[...images.slice(0,Math.max(0,limit-videos.length)).map(entry=>({type:'image',...entry})),...videos.map(entry=>({type:'video',...entry}))];
+ const imageTotal=videoCount.value>1?0:imageCandidates.length?imageCount.value:videoCandidates.length?0:metaImageCount.value;
+ return{title:pageTitle,description:descriptionMeta.map(x=>cleanText(x,1500)).find(Boolean)||'',canonicalUrl,media,mediaCount:media.length,truncated:imageTotal+videoCount.value>limit};
 }
 
 export function decompress(response){
@@ -155,7 +157,7 @@ function requestPage(url,address){
  });
 }
 
-function requestMedia(url,address){
+function requestMediaStream(url,address){
  const transport=url.protocol==='https:'?https:http;
  return new Promise((resolve,reject)=>{
   const request=transport.get(url,{headers:{'user-agent':USER_AGENT,accept:'image/*,video/*,audio/*,application/octet-stream;q=0.9,*/*;q=0.1','accept-encoding':'identity'},lookup:createPinnedLookup(address),servername:net.isIP(url.hostname)?undefined:url.hostname,rejectUnauthorized:true},response=>{
@@ -164,12 +166,7 @@ function requestMedia(url,address){
    const contentType=String(response.headers['content-type']||'application/octet-stream').split(';')[0].trim().toLowerCase();
    if(status<200||status>=300){response.resume();reject(new Error(`The media host returned HTTP ${status}.`));return}
    if(contentType==='text/html'||contentType==='application/xhtml+xml'){response.resume();reject(new Error('This URL serves a webpage, not a downloadable media file. Preview the page and download one of its media items instead.'));return}
-   const length=Number(response.headers['content-length']);
-   if(Number.isFinite(length)&&length>MAX_DOWNLOAD_BYTES){response.resume();reject(new Error('This media file exceeds the 50 MB download limit.'));return}
-   const chunks=[];let received=0;
-   response.on('data',chunk=>{received+=chunk.length;if(received>MAX_DOWNLOAD_BYTES){response.destroy(new Error('This media file exceeds the 50 MB download limit.'));return}chunks.push(chunk)});
-   response.on('end',()=>resolve({status,contentType,body:Buffer.concat(chunks,received),headers:response.headers}));
-   response.on('error',reject);
+   resolve({status,contentType,headers:response.headers,stream:response});
   });
   request.setTimeout(REQUEST_TIMEOUT_MS,()=>request.destroy(new Error('The media download timed out.')));
   request.on('error',reject);
@@ -181,7 +178,7 @@ export function safeDownloadFilename(value){
  return name||'download';
 }
 
-export async function downloadPublicMedia(rawUrl){
+export async function openPublicMedia(rawUrl){
  let current;
  try{current=new URL(rawUrl)}catch{throw new Error('Enter a valid media URL.')}
  if(!['http:','https:'].includes(current.protocol)||current.username||current.password)throw new Error('Only public HTTP or HTTPS media URLs can be downloaded.');
@@ -189,7 +186,7 @@ export async function downloadPublicMedia(rawUrl){
  for(let redirects=0;redirects<=MAX_REDIRECTS;redirects++){
   const address=await resolvePublicAddress(current.hostname);
   if(!address)throw new Error('This media URL resolves to a private or unavailable network address and cannot be downloaded.');
-  const result=await requestMedia(current,address);
+  const result=await requestMediaStream(current,address);
   if([301,302,303,307,308].includes(result.status)){
    if(!result.location)throw new Error('The media host returned an invalid redirect.');
    if(redirects===MAX_REDIRECTS)throw new Error('The media URL redirected too many times.');
@@ -203,9 +200,16 @@ export async function downloadPublicMedia(rawUrl){
   if(disposition){try{fromHeader=decodeURIComponent(disposition.replace(/^"|"$/g,''))}catch{fromHeader=disposition}}
   let fromUrl='';
   try{fromUrl=decodeURIComponent(current.pathname.split('/').filter(Boolean).at(-1)||'')}catch{}
-  return{body:result.body,contentType:result.contentType,filename:safeDownloadFilename(fromHeader||fromUrl||'download')};
+  return{stream:result.stream,contentType:result.contentType,contentLength:result.headers['content-length'],filename:safeDownloadFilename(fromHeader||fromUrl||'download')};
  }
  throw new Error('Could not follow the media redirect.');
+}
+
+export async function downloadPublicMedia(rawUrl){
+ const result=await openPublicMedia(rawUrl);
+ const chunks=[];
+ for await(const chunk of result.stream)chunks.push(chunk);
+ return{body:Buffer.concat(chunks),contentType:result.contentType,filename:result.filename};
 }
 
 export async function extractPage(rawUrl){

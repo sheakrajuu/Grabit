@@ -4,6 +4,8 @@ import {previewUrl} from './importer.js';
 
 'use strict';
 const V={view:'all',sectionId:null,tag:null,q:'',type:'all',sort:'recent',selectMode:false,selected:new Set(),mediaIndex:-1,dialogItemId:null,dialogMode:'view',items:[],sections:[],downloads:[],downloadPreview:null,downloadError:'',downloadUrl:'',installPrompt:null,showHiddenMedia:false,preview:null,watch:null,watchScrollTimer:null,watchResizeObserver:null};
+let appUpdatePending=false;
+let reloadingForAppUpdate=false;
 const icon=d=>`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
 const icons={all:'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',inbox:'M3 12h5l1 2h6l1-2h5M5 5h14l2 7v7H3v-7z',star:'M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z',recent:'M3 12a9 9 0 1 0 3-6.7M3 4v5h5m4-1v5l3 2',archive:'M3 5h18v4H3zM5 9v11h14V9m-9 4h4',section:'M3 5h18v15H3zM3 9h18M7 5V3h10v2',download:'M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4',more:'M12 7a1 1 0 1 0 0-2 1 1 0 0 0 0 2M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2M12 19a1 1 0 1 0 0-2 1 1 0 0 0 0 2',hide:'M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 5.2A10.8 10.8 0 0 1 12 5c5 0 8.3 4.2 9 7-.3 1.2-1 2.3-1.8 3.2M6.2 6.2C4 7.5 2.5 9.7 2 12c.7 2.8 4 7 10 7 1.2 0 2.3-.2 3.3-.6'};
 function toast(message){const el=$('#ts');el.textContent=message;el.classList.add('on');clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.classList.remove('on'),2800)}
@@ -12,7 +14,31 @@ async function refreshLibrary(){const data=await loadLibrary();V.items=data.item
 function loadDownloadHistory(){try{const stored=JSON.parse(localStorage.getItem('grabit-download-history')||'[]');V.downloads=Array.isArray(stored)?stored.filter(entry=>entry&&typeof entry==='object'&&(typeof entry.url==='string'||typeof entry.localMediaId==='string')).slice(0,200):[]}catch(error){console.warn('Could not read download history:',error);V.downloads=[]}}
 function storeDownloadHistory(){try{localStorage.setItem('grabit-download-history',JSON.stringify(V.downloads.slice(0,200)))}catch(error){reportError('Could not save download history',error)}}
 function show(html,wide=false){$('#bx').innerHTML=html;$('#bx').classList.toggle('wide',wide);$('#md').classList.remove('image-view-mode');$('#md').classList.add('on');const focus=$('#bx input,#bx textarea,#bx select,#bx button');focus?.focus()}
-function hide(){const active=document.activeElement;$('#md').classList.remove('on','image-view-mode');$('#bx').innerHTML='';V.dialogItemId=null;V.dialogMode='view';if(active&&active.matches('input,textarea,select'))$('#add').focus()}
+function hide(){const active=document.activeElement;$('#md').classList.remove('on','image-view-mode');$('#bx').innerHTML='';V.dialogItemId=null;V.dialogMode='view';if(active&&active.matches('input,textarea,select'))$('#add').focus();reloadForAppUpdate()}
+function reloadForAppUpdate(){
+ if(!appUpdatePending||reloadingForAppUpdate||$('#md').classList.contains('on'))return;
+ if([...document.querySelectorAll('input[type="file"]')].some(input=>input.files?.length))return;
+ appUpdatePending=false;reloadingForAppUpdate=true;location.reload();
+}
+function watchForAppUpdates(){
+ if(!('serviceWorker'in navigator))return;
+ let hadController=Boolean(navigator.serviceWorker.controller);
+ navigator.serviceWorker.addEventListener('controllerchange',()=>{
+  if(!hadController){hadController=true;return}
+  appUpdatePending=true;
+  if($('#md').classList.contains('on')||[...document.querySelectorAll('input[type="file"]')].some(input=>input.files?.length)){
+   toast('An update is ready. Save your open work and close this dialog to apply it.');
+   return;
+  }
+  reloadForAppUpdate();
+ });
+ navigator.serviceWorker.register('./service-worker.js').then(registration=>{
+  const checkForUpdate=()=>registration.update().catch(error=>console.warn('Grabit could not check for an app update:',error));
+  checkForUpdate();
+  setInterval(()=>{if(document.visibilityState==='visible')checkForUpdate()},5*60*1000);
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')checkForUpdate()});
+ }).catch(error=>console.error('Grabit could not register offline support:',error));
+}
 function sectionName(id){return V.sections.find(s=>s.id===id)?.name||''}
 function sectionOptions(selected=[]){return V.sections.map(s=>`<label class="checklist"><input type="checkbox" name="section" value="${esc(s.id)}"${selected.includes(s.id)?' checked':''}> ${esc(s.name)}</label>`).join('')||'<div class="hint">No sections yet. Create one in the sidebar.</div>'}
 function destinationOptions(){return`<select class="in" name="destination" aria-label="Save destination"><option value="">Inbox</option>${V.sections.map(section=>`<option value="${esc(section.id)}">${esc(section.name)}</option>`).join('')}</select>`}
@@ -24,7 +50,7 @@ function navItem(view,label,ic,count,sectionId){return `<div class="nv${V.view==
 function renderNav(){
  const live=V.items.filter(i=>!i.isArchived);
  const count=(fn)=>live.filter(fn).length;
- $('#nav').innerHTML=`<div class="sec">Library</div>${navItem('all','All content',icons.all,count(()=>true))}${navItem('inbox','Inbox',icons.inbox,count(i=>i.inbox))}${navItem('favorites','Favorites',icons.star,count(i=>i.isFavorite))}${navItem('recent','Recently added',icons.recent)}${navItem('downloads','Downloads',icons.download,V.downloads.length)}${navItem('archived','Archived',icons.archive)}
+ $('#nav').innerHTML=`<div class="sec">Library</div>${navItem('all','All content',icons.all,count(i=>!i.hiddenFromAll))}${navItem('inbox','Inbox',icons.inbox,count(i=>i.inbox))}${navItem('favorites','Favorites',icons.star,count(i=>i.isFavorite))}${navItem('recent','Recently added',icons.recent)}${navItem('downloads','Download',icons.download,V.downloads.length)}${navItem('archived','Archived',icons.archive)}
  <div class="sec">Sections<button id="addSection" title="Create section" aria-label="Create section">+</button></div>${V.sections.map(s=>`<div class="section-entry">${navItem('section',s.name,icons.section,count(i=>!i.isArchived&&(i.sectionIds||[]).includes(s.id)),s.id)}<button class="section-manage" data-manage-section="${esc(s.id)}" aria-label="Manage ${esc(s.name)}" title="Manage section">${icon(icons.more)}</button></div>`).join('')}
  <div class="sec">Library tools</div><div class="nv" id="installApp" role="button" tabindex="0">${icon('M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4')}<span>Install Grabit app</span></div><div class="nv" id="exportLibrary" role="button" tabindex="0">${icon('M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4')}<span>Export library</span></div>`;
 }
@@ -32,6 +58,7 @@ function matchingItems(){
  const q=V.q.trim().toLocaleLowerCase();
  let items=V.items.filter(i=>{
   if(V.view==='archived'?!i.isArchived:i.isArchived)return false;
+  if(V.view==='all'&&i.hiddenFromAll)return false;
   if(V.view==='recent'&&Date.parse(i.savedAt)<Date.now()-7*24*60*60*1000)return false;
   if(V.view==='inbox'&&!i.inbox)return false;
   if(V.view==='favorites'&&!i.isFavorite)return false;
@@ -51,9 +78,9 @@ function card(item){
  const image=item.type==='note'?'':`<img class="art" src="${esc(thumb)}" alt="" loading="lazy" decoding="async">`;
  return `<article class="card${item.type==='note'?' note-card':''}" data-id="${esc(item.id)}" tabindex="0" aria-label="${esc(item.title)}">
  ${image}<span class="bd">${labels[item.type]||'ITEM'}</span><div class="cap">${esc(item.title||'Untitled')}</div>${item.sourceDomain?`<div class="source">${esc(item.sourceDomain)}</div>`:''}
- <button class="card-menu-button" data-card-menu="${esc(item.id)}" aria-label="More actions for ${esc(item.title)}" aria-haspopup="menu" aria-expanded="false">${icon(icons.more)}</button><div class="card-menu" role="menu"><button role="menuitem" data-card-action="edit" data-id="${esc(item.id)}">Edit</button><button role="menuitem" data-card-action="favorite" data-id="${esc(item.id)}">${item.isFavorite?'Remove favorite':'Add to favorites'}</button><button role="menuitem" data-card-action="archive" data-id="${esc(item.id)}">${item.isArchived?'Restore':'Archive'}</button><button role="menuitem" class="d" data-card-action="delete" data-id="${esc(item.id)}">Delete</button></div>${V.selectMode?`<input class="select-card" type="checkbox" data-select="${esc(item.id)}" aria-label="Select ${esc(item.title)}"${V.selected.has(item.id)?' checked':''} style="position:absolute;top:9px;left:9px;width:19px;height:19px;accent-color:var(--ac)">`:''}</article>`;
+ <button class="card-menu-button" data-card-menu="${esc(item.id)}" aria-label="More actions for ${esc(item.title)}" aria-haspopup="menu" aria-expanded="false">${icon(icons.more)}</button><div class="card-menu" role="menu">${item.sectionIds?.length?`<button role="menuitem" data-card-action="allVisibility" data-id="${esc(item.id)}">${item.hiddenFromAll?'Show in All content':'Hide from All content'}</button>`:''}<button role="menuitem" data-card-action="edit" data-id="${esc(item.id)}">Edit</button><button role="menuitem" data-card-action="favorite" data-id="${esc(item.id)}">${item.isFavorite?'Remove favorite':'Add to favorites'}</button><button role="menuitem" data-card-action="archive" data-id="${esc(item.id)}">${item.isArchived?'Restore':'Archive'}</button><button role="menuitem" class="d" data-card-action="delete" data-id="${esc(item.id)}">Delete</button></div>${V.selectMode?`<input class="select-card" type="checkbox" data-select="${esc(item.id)}" aria-label="Select ${esc(item.title)}"${V.selected.has(item.id)?' checked':''} style="position:absolute;top:9px;left:9px;width:19px;height:19px;accent-color:var(--ac)">`:''}</article>`;
 }
-function titleForView(){return V.view==='section'?sectionName(V.sectionId):({all:'All content',inbox:'Inbox',favorites:'Favorites',recent:'Recently added',downloads:'Downloads',archived:'Archived'}[V.view]||'All content')}
+function titleForView(){return V.view==='section'?sectionName(V.sectionId):({all:'All content',inbox:'Inbox',favorites:'Favorites',recent:'Recently added',downloads:'Download',archived:'Archived'}[V.view]||'All content')}
 function render(){
  renderNav();$('#ttl').textContent=titleForView();
  if(V.view==='downloads'){renderDownloadHistory();return}
@@ -67,7 +94,7 @@ function render(){
 }
 function imageFile(file){return new Promise((resolve,reject)=>{if(!file||!file.type.startsWith('image/')){reject(new Error('Choose a valid image file.'));return}if(file.size>12*1024*1024){reject(new Error('Images must be smaller than 12 MB for local storage.'));return}const reader=new FileReader();reader.onerror=()=>reject(new Error('Could not read the selected image.'));reader.onload=()=>{const image=new Image();image.onerror=()=>reject(new Error('The selected file is not a readable image.'));image.onload=()=>{const scale=Math.min(1,1600/Math.max(image.width,image.height)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.width*scale));canvas.height=Math.max(1,Math.round(image.height*scale));const ctx=canvas.getContext('2d');if(!ctx){reject(new Error('Image processing is unavailable.'));return}ctx.drawImage(image,0,0,canvas.width,canvas.height);resolve({data:canvas.toDataURL('image/jpeg',.84),width:canvas.width,height:canvas.height})};image.src=reader.result};reader.readAsDataURL(file)})}
 function emptyItem({type,title,sourceUrl='',media=[],thumbnailUrl='',notes='',description='',tags=[],sectionIds=[]}){
- const now=new Date().toISOString();return{id:uid(),type,title:title.trim()||host(sourceUrl)||'Untitled',description,notes,sourceUrl,originalUrl:sourceUrl,canonicalUrl:normalized(sourceUrl),sourceDomain:host(sourceUrl),thumbnailUrl,media:media.map((m,position)=>({...m,id:m.id||uid(),position})),tags:[...new Set(tags.map(x=>x.trim()).filter(Boolean))],sectionIds,isFavorite:false,isArchived:false,inbox:sectionIds.length===0,savedAt:now,updatedAt:now};
+ const now=new Date().toISOString();return{id:uid(),type,title:title.trim()||host(sourceUrl)||'Untitled',description,notes,sourceUrl,originalUrl:sourceUrl,canonicalUrl:normalized(sourceUrl),sourceDomain:host(sourceUrl),thumbnailUrl,media:media.map((m,position)=>({...m,id:m.id||uid(),position})),tags:[...new Set(tags.map(x=>x.trim()).filter(Boolean))],sectionIds,isFavorite:false,isArchived:false,hiddenFromAll:false,inbox:sectionIds.length===0,savedAt:now,updatedAt:now};
 }
 function addDialog(){
  show(`<b>Add to your library</b><p class="hint">Save a link, add a note, or upload images.</p><div class="row"><button class="b p" data-action="importDialog">Save URL(s)</button><button class="b" data-action="noteDialog">New note</button><button class="b" data-action="uploadDialog">Upload images</button><button class="b" data-action="close">Cancel</button></div>`);
@@ -76,12 +103,13 @@ function importDialog(){
  V.preview=null;
  show(`<b>Save URL(s)</b><p class="hint">Paste a webpage or public social-media post URL to preview its images and videos. Grabit supports public Instagram, Facebook, Pinterest, TikTok, YouTube, Vimeo, and X/Twitter posts where their providers permit embeds. Private, login-only, or restricted posts may not be available.</p>
  <label for="urls">URL(s)</label><textarea class="in" id="urls" placeholder="https://example.com/article&#10;https://example.com/photo.jpg" autocomplete="url"></textarea>
- <div class="row"><button class="b" data-action="previewPage">View preview</button></div><div id="extractionPreview"></div>
+ <label for="mediaKind">Media to detect</label><select class="in" id="mediaKind"><option value="all">Auto-detect images and videos</option><option value="image">Images only</option><option value="video">Videos only</option></select><p class="hint">Direct image and video links are detected by type. Webpage previews include all detected types unless you choose a filter.</p>
+ <div class="row"><button class="b p" data-action="previewPage">Detect and preview media</button></div><div id="extractionPreview"></div>
  <label for="importTitle">Title (optional; applied when importing one URL)</label><input class="in" id="importTitle" maxlength="240" placeholder="Page title">
  <label for="importDescription">Description (optional)</label><textarea class="in" id="importDescription" maxlength="3000" placeholder="Description"></textarea>
  <label>Save to</label><div id="importSections">${destinationOptions()}</div>
  <p class="hint">For a batch of direct image or video links, same-type media are grouped into one gallery or playlist.</p>
- <div class="row"><button class="b p" data-action="import">Save URLs</button><button class="b" data-action="close">Cancel</button></div>`);
+ <div class="row"><button class="b" data-action="import">Save links only (no media fetch)</button><button class="b" data-action="close">Cancel</button></div>`);
 }
 function previewPanel(){
  const state=V.preview;if(!state)return;
@@ -111,6 +139,8 @@ async function previewPage(requestedUrls){
   for(const url of urls){
    try{
     const page=await extractPageForWatch(url);
+    const mediaKind=$('#mediaKind')?.value||'all';
+    if(mediaKind!=='all')page.media=page.media.filter(media=>media.type===mediaKind);
     const canonical=normalized(page.canonicalUrl||url);
     const prior=V.items.filter(item=>item.canonicalUrl===canonical||normalized(item.sourceUrl)===canonical||item.sourceUrls?.some(saved=>normalized(saved)===canonical));
     const hiddenUrls=new Set(prior.flatMap(item=>item.hiddenMediaUrls||[]));
@@ -135,7 +165,9 @@ async function savePreview(){
  const title=$('#importTitle').value.trim()||firstPage.title||host(firstPage.url);
  const description=$('#importDescription').value.trim()||firstPage.description||'';
  try{
-  const item=emptyItem({type:savedMedia.length?'gallery':'bookmark',title,description,sourceUrl:firstPage.url,media:savedMedia.map((entry,position)=>({type:entry.type,sourceUrl:entry.url,embedUrl:entry.embedUrl||'',thumbnailUrl:entry.thumbnailUrl||'',alt:entry.alt||'',width:entry.width,height:entry.height,hidden:entry.hidden,position,pageIndex:entry.pageIndex})),thumbnailUrl:selected.find(media=>media.type==='image')?.url||selected[0]?.thumbnailUrl||fallbackThumbnail('bookmark'),sectionIds:chosen});
+  const allVideos=savedMedia.length>0&&savedMedia.every(media=>media.type==='video');
+  const type=!savedMedia.length?'bookmark':state.pages.length===1&&savedMedia.length===1?savedMedia[0].type:allVideos?'playlist':'gallery';
+  const item=emptyItem({type,title,description,sourceUrl:firstPage.url,media:savedMedia.map((entry,position)=>({type:entry.type,sourceUrl:entry.url,embedUrl:entry.embedUrl||'',thumbnailUrl:entry.thumbnailUrl||'',alt:entry.alt||'',width:entry.width,height:entry.height,hidden:entry.hidden,position,pageIndex:entry.pageIndex})),thumbnailUrl:selected.find(media=>media.type==='image')?.url||selected[0]?.thumbnailUrl||fallbackThumbnail(type),sectionIds:chosen});
   item.canonicalUrl=firstPage.canonicalUrl;item.sourceUrls=state.pages.map(page=>page.url);item.sourcePages=state.pages.map((page,index)=>({url:page.url,canonicalUrl:page.canonicalUrl,title:page.title,description:page.description,index,extracted:page.extracted,media:savedMedia.filter(media=>media.pageIndex===index).map(({url,...media},position)=>({...media,sourceUrl:url,position,pageIndex:index}))}));item.hiddenMediaUrls=hiddenMediaUrls;
   await storeItem(item);
   await refreshLibrary();V.preview=null;hide();render();toast(`Saved ${state.pages.length} URL(s) and ${selected.length} media item(s).`);
@@ -171,7 +203,7 @@ function detail(id){
 function startWatch(id){
  const existing=V.watch;
  const item=V.items.find(entry=>entry.id===id);
- V.watch={itemId:id,pageIndex:existing?.itemId===id?existing.pageIndex:0,mediaIndex:existing?.itemId===id?existing.mediaIndex:item?.type==='image'?0:-1,scrollTop:0};
+ V.watch={itemId:id,pageIndex:existing?.itemId===id?existing.pageIndex:0,mediaIndex:existing?.itemId===id?existing.mediaIndex:['image','video'].includes(item?.type)||item?.type==='bookmark'&&item.media?.length===1&&item.media[0].type==='video'?0:-1,scrollTop:0};
  syncWatchUrl(!existing);renderWatchPage(true);
 }
 function orderedMedia(item){return(item.media||[]).slice().sort((a,b)=>(a.position||0)-(b.position||0))}
@@ -200,22 +232,21 @@ function downloadButton(item,media,label='Download',className='b media-download-
 async function downloadMedia(url,{itemId='',title='Media',type='image',thumbnailUrl=''}={}){
  if(!url){toast('This media has no downloadable source URL.');return}
  try{
-  let blob,filename='';
-  if(url.startsWith('data:')||url.startsWith('blob:'))blob=await(await fetch(url)).blob();
-  else{
-   const response=await fetch('/api/download',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url}),signal:AbortSignal.timeout(65000)});
-   if(!response.ok){let payload={};try{payload=await response.json()}catch{}throw new Error(payload.error||`Download failed (${response.status}).`)}
-   blob=await response.blob();
-   const disposition=response.headers.get('content-disposition')||'';
-   const utfName=disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
-   const asciiName=disposition.match(/filename="([^"]*)"/i)?.[1];
-   try{filename=decodeURIComponent(utfName||asciiName||'')}catch{filename=asciiName||''}
+  const local=url.startsWith('data:')||url.startsWith('blob:');
+  const anchor=document.createElement('a');let filename='';
+  if(local){
+   const blob=await(await fetch(url)).blob();
+   if(!blob.size)throw new Error('The downloaded media file is empty.');
+   const objectUrl=URL.createObjectURL(blob);
+   filename=`${title.replace(/[<>:"/\\|?*\u0000-\u001f]/g,'_')||'media'}.${type==='video'?'mp4':'jpg'}`;
+   anchor.href=objectUrl;anchor.download=filename;setTimeout(()=>URL.revokeObjectURL(objectUrl),60_000);
+  }else{
+   anchor.href=`/api/download?url=${encodeURIComponent(url)}`;
+   anchor.rel='noopener';
+   filename=host(url)||title||'media';
   }
-  if(!blob.size)throw new Error('The downloaded media file is empty.');
-  const objectUrl=URL.createObjectURL(blob),anchor=document.createElement('a');
-  anchor.href=objectUrl;anchor.download=filename||`${title.replace(/[<>:"/\\|?*\u0000-\u001f]/g,'_')||'media'}.${type==='video'?'mp4':'jpg'}`;
-  document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(objectUrl),60_000);
-  V.downloads.unshift({itemId,url,title,type,thumbnailUrl,filename:anchor.download,downloadedAt:new Date().toISOString()});V.downloads=V.downloads.slice(0,200);storeDownloadHistory();renderNav();toast(`Download started: ${anchor.download}`);
+  document.body.append(anchor);anchor.click();anchor.remove();
+  V.downloads.unshift({itemId,url,title,type,thumbnailUrl,filename,downloadedAt:new Date().toISOString()});V.downloads=V.downloads.slice(0,200);storeDownloadHistory();renderNav();toast(`Download started: ${filename}`);
  }catch(error){console.error('Media download failed:',error);toast(error.message||'Could not download this media.')}
 }
 function renderDownloadHistory(){
@@ -258,7 +289,7 @@ async function installGrabit(){
 function embedPage(url,data){
  const page={url,canonicalUrl:data.canonicalUrl||normalized(url),title:data.title||host(url),description:data.description||'',media:Array.isArray(data.media)?data.media:[]};
  const embed=socialMediaEmbed(url);
- if(embed){
+ if(embed&&!(embed.type==='video'&&page.media.filter(media=>media.type==='video').length>1)){
   const sourceMedia=page.media.find(media=>media.type===embed.type)||page.media.find(media=>media.type==='image')||page.media.find(media=>media.type==='video');
   const thumbnail=page.media.find(media=>media.type==='image')?.url||page.media.find(media=>media.type==='video')?.thumbnailUrl||fallbackThumbnail(embed.type);
   page.media=page.media.filter(media=>media.type!=='video'&&media.url!==thumbnail);
@@ -292,6 +323,7 @@ async function loadWatchPage(item){
   if(!pages.length)throw new Error('No valid page URLs are saved for this item.');
   item.sourcePages=pages.map((page,index)=>({...page,index,media:page.media.map((media,position)=>({...media,type:media.type||'image',sourceUrl:media.url||media.sourceUrl||'',position,pageIndex:index,thumbnailUrl:media.thumbnailUrl||''}))}));
   item.media=item.sourcePages.flatMap(page=>page.media);
+  if(item.type==='bookmark'&&item.media.length===1&&item.media[0].type==='video'&&V.watch?.itemId===item.id)V.watch.mediaIndex=0;
   if(!item.thumbnailUrl||item.thumbnailUrl.startsWith('data:image/svg+xml,')||(item.hiddenMediaUrls||[]).includes(item.thumbnailUrl))item.thumbnailUrl=defaultThumbnail(item);
   item.updatedAt=new Date().toISOString();await storeItem(item);await refreshLibrary();
   if(V.watch?.itemId===item.id){V.watch.loading=false;renderWatchPage(false);if(item.sourcePages.some(page=>page.error))toast('Some URLs could not be previewed; use the URL controls to continue or retry.')}
@@ -355,7 +387,7 @@ function renderWatchPage(pushScroll=false,message=''){
  }
  main.scrollTop=savedScroll;watch.scrollTop=savedScroll;
  if(message&&message.startsWith('Could not fetch')&&watch.retrying)return;
- if(item.type!=='image'&&!message&&!watch.extractionAttempted&&(!item.sourcePages?.length||item.sourcePages.some(page=>!page.extracted))&&!watch.loading)loadWatchPage(item);
+ if(!(item.type==='image'||item.type==='video'&&item.media?.length)&&!message&&!watch.extractionAttempted&&(!item.sourcePages?.length||item.sourcePages.some(page=>!page.extracted))&&!watch.loading)loadWatchPage(item);
 }
 function mediaTile(item,media,index){
  const source=mediaSource(media);const visual=media.type==='video'
@@ -382,7 +414,7 @@ function renderItemViewer(item){
   const hiddenCount=(item.hiddenMediaUrls||[]).length;
   display=`${hiddenCount?`<div class="row hidden-toggle"><button class="b" data-action="toggleHiddenMedia">${V.showHiddenMedia?'Hide hidden media':'Show hidden media'} (${hiddenCount})</button></div>`:''}<div class="media-grid">${media.map((entry,index)=>mediaTile(item,entry,index)).join('')||'<p class="hint">No visible media in this gallery.</p>'}</div>`;
  }else if(item.type==='video'&&media[0]){
-  display=`<div class="focus-media">${media[0].embedUrl?`<iframe src="${esc(media[0].embedUrl)}" title="${esc(item.title)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`:`<video controls playsinline preload="metadata" poster="${esc(media[0].thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(media[0]))}">Video playback is unavailable in this browser.</video>`}</div><div class="row">${downloadButton(item,media[0])}<button class="b" data-media-visibility="${esc(media[0].sourceUrl)}">${(item.hiddenMediaUrls||[]).includes(media[0].sourceUrl)?'Unhide':'Hide'} this video</button></div>`;
+  display=`<div class="focus-media">${media[0].embedUrl?`<iframe src="${esc(media[0].embedUrl)}" title="${esc(item.title)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`:`<video controls autoplay playsinline preload="metadata" poster="${esc(media[0].thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(media[0]))}">Video playback is unavailable in this browser.</video>`}</div><div class="row">${downloadButton(item,media[0])}<button class="b" data-media-visibility="${esc(media[0].sourceUrl)}">${(item.hiddenMediaUrls||[]).includes(media[0].sourceUrl)?'Unhide':'Hide'} this video</button></div>`;
  }else if(item.type==='image'&&media[0]){
   if(media[0].type==='image'&&!media[0].embedUrl){imageViewMode=true;display=libraryImageViewer(item,media[0],0,1,'close')}
   else display=`<div class="focus-media"><img src="${esc(mediaSource(media[0]))}" alt="${esc(item.title)}"></div><div class="row">${downloadButton(item,media[0])}<button class="b" data-media-visibility="${esc(media[0].sourceUrl)}">${(item.hiddenMediaUrls||[]).includes(media[0].sourceUrl)?'Unhide':'Hide'} this image</button></div>`;
@@ -410,6 +442,7 @@ function editItem(id){
  <label for="detailSource">Source URL</label><input class="in" id="detailSource" type="url" value="${esc(item.sourceUrl||'')}">
  ${['gallery','playlist'].includes(item.type)?`<label for="mediaUrls">Media URLs (one per line; order is preserved)</label><textarea class="in" id="mediaUrls">${esc(media.map(m=>m.sourceUrl||m.storedDataUrl||'').join('\n'))}</textarea>`:''}
  <label>Sections (uncheck all to return to Inbox)</label><div id="detailSections">${sectionOptions(item.sectionIds||[])}</div>
+ <label class="checklist"><input id="detailHideFromAll" type="checkbox"${item.hiddenFromAll?' checked':''}> Hide from All content (keep it in its section)</label>
  <label class="checklist"><input id="detailFavorite" type="checkbox"${item.isFavorite?' checked':''}> Favorite</label>
  <div class="row"><button class="b p" data-action="saveItem" data-id="${esc(item.id)}">Save changes</button><button class="b" data-action="cancelEdit" data-id="${esc(item.id)}">Cancel</button></div>`,true);
 }
@@ -474,7 +507,7 @@ async function saveDetail(id){
   if(lines.some(x=>!validUrl(x))){toast('Every media URL must use http or https.');return}
   media=lines.map((url,position)=>({...media.find(m=>m.sourceUrl===url)||{},id:media.find(m=>m.sourceUrl===url)?.id||uid(),type:item.type==='gallery'?'image':'video',sourceUrl:url,storedDataUrl:undefined,position}));
  }
- const sourceChanged=source!==item.sourceUrl;item.title=$('#detailTitle').value.trim()||item.title;item.description=$('#detailDescription').value.trim();item.notes=$('#detailNotes').value.trim();item.tags=parseTags($('#detailTags').value);item.thumbnailUrl=item.type==='note'?'':thumb||media.find(m=>m.storedDataUrl)?.storedDataUrl||media.find(m=>m.type==='image')?.sourceUrl||'';item.sourceUrl=source;item.canonicalUrl=normalized(source);item.sourceDomain=host(source);if(['image','video'].includes(item.type)&&media[0]&&sourceChanged)media[0].sourceUrl=source;item.media=media;item.sectionIds=selectedSections($('#detailSections'));item.inbox=item.sectionIds.length===0;item.isFavorite=$('#detailFavorite').checked;item.updatedAt=new Date().toISOString();
+ const sourceChanged=source!==item.sourceUrl;item.title=$('#detailTitle').value.trim()||item.title;item.description=$('#detailDescription').value.trim();item.notes=$('#detailNotes').value.trim();item.tags=parseTags($('#detailTags').value);item.thumbnailUrl=item.type==='note'?'':thumb||media.find(m=>m.storedDataUrl)?.storedDataUrl||media.find(m=>m.type==='image')?.sourceUrl||'';item.sourceUrl=source;item.canonicalUrl=normalized(source);item.sourceDomain=host(source);if(['image','video'].includes(item.type)&&media[0]&&sourceChanged)media[0].sourceUrl=source;item.media=media;item.sectionIds=selectedSections($('#detailSections'));item.inbox=item.sectionIds.length===0;item.hiddenFromAll=Boolean($('#detailHideFromAll').checked&&item.sectionIds.length);item.isFavorite=$('#detailFavorite').checked;item.updatedAt=new Date().toISOString();
  try{await storeItem(item);await refreshLibrary();if(V.watch?.itemId===id){hide();renderWatchPage()}else renderItemViewer(V.items.find(x=>x.id===id));toast('Changes saved.')}catch(e){reportError('Could not save changes',e)}
 }
 async function toggleFavorite(id){
@@ -626,6 +659,7 @@ $('#main').addEventListener('click',async e=>{
   const menu=cardAction.closest('.card-menu');if(menu){menu.classList.remove('open');menu.previousElementSibling?.setAttribute('aria-expanded','false')}
   if(action==='edit'){editItem(id);return}
   if(action==='favorite'){await toggleFavorite(id);return}
+  if(action==='allVisibility'){item.hiddenFromAll=!item.hiddenFromAll;item.updatedAt=new Date().toISOString();try{await storeItem(item);await refreshLibrary();render();toast(item.hiddenFromAll?'Hidden from All content.':'Shown in All content.')}catch(error){reportError('Could not update All content visibility',error)}return}
   if(action==='archive'){item.isArchived=!item.isArchived;item.updatedAt=new Date().toISOString();try{await storeItem(item);await refreshLibrary();render();toast(item.isArchived?'Archived.':'Restored from archive.')}catch(error){reportError('Could not update archive status',error)}return}
   if(action==='delete'){show(`<b>Delete this item?</b><p>This permanently removes it from this browser library. This cannot be undone.</p><div class="row"><button class="b d" data-action="confirmDeleteItem" data-id="${esc(id)}">Delete permanently</button><button class="b" data-action="cancelDeleteItem" data-id="${esc(id)}">Cancel</button></div>`,true);return}
  }
@@ -681,7 +715,7 @@ addEventListener('appinstalled',()=>{V.installPrompt=null;toast('Grabit was inst
 document.addEventListener('error',e=>{const image=e.target;if(!(image instanceof HTMLImageElement)||image.dataset.fallbackApplied)return;image.dataset.fallbackApplied='true';image.src=fallbackThumbnail(image.closest('.card')?.querySelector('.bd')?.textContent||'media')},{capture:true});
 addEventListener('drop',e=>{e.preventDefault();const dropped=[...e.dataTransfer.files],files=dropped.filter(file=>file.type.startsWith('image/'));if(dropped.length!==files.length)toast('Only image files can be added by drag and drop.');if(!files.length)return;V.droppedFiles=files;uploadDialog()});
 async function init(){
- try{let theme='dark';try{theme=localStorage.getItem('grabit-theme')||theme}catch(error){console.warn('Grabit could not read the saved theme preference:',error)}applyTheme(theme);loadDownloadHistory();if('serviceWorker'in navigator)navigator.serviceWorker.register('./service-worker.js').catch(error=>console.error('Grabit could not register offline support:',error));await openDB();await migrateLegacy();await refreshLibrary();if(readWatchRoute())renderWatchPage(true);else render()}
+ try{let theme='dark';try{theme=localStorage.getItem('grabit-theme')||theme}catch(error){console.warn('Grabit could not read the saved theme preference:',error)}applyTheme(theme);loadDownloadHistory();watchForAppUpdates();await openDB();await migrateLegacy();await refreshLibrary();if(readWatchRoute())renderWatchPage(true);else render()}
  catch(error){console.error('Grabit could not start its local library:',error);$('#main').innerHTML=`<div class="empty"><b>Grabit could not open local storage.</b><p>${esc(error.message)}</p><p>Check browser storage permissions and available space, then reload.</p></div>`;$('#add').disabled=true}
 }
 init();

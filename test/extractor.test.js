@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Readable} from 'node:stream';
 import {brotliCompressSync,deflateSync,gzipSync} from 'node:zlib';
-import {parsePage,bestSrcsetCandidate,resolvePublicAddress,createPinnedLookup,decompress,safeDownloadFilename,downloadPublicMedia,extractorLimits} from '../server/extractor.js';
+import {parsePage,bestSrcsetCandidate,resolvePublicAddress,createPinnedLookup,decompress,safeDownloadFilename,downloadPublicMedia,openPublicMedia,extractorLimits} from '../server/extractor.js';
 import {videoEmbedUrl,socialMediaEmbed} from '../js/utils.js';
 
 test('extracts page metadata and canonical URL',()=>{
@@ -42,6 +42,36 @@ test('returns media limit and reports truncation when a page exceeds the cap',()
 test('parses video sources and their poster thumbnails',()=>{
  const page=parsePage('<video poster="/preview.jpg"><source src="/video.mp4"></video>','https://example.test/watch');
  assert.deepEqual(page.media,[{type:'video',url:'https://example.test/video.mp4',thumbnailUrl:'https://example.test/preview.jpg'}]);
+});
+
+test('does not include video poster metadata as page image media',()=>{
+ const page=parsePage('<meta property="og:image" content="/poster.jpg"><meta property="og:video" content="/video.mp4"><video poster="/frame.jpg"><source src="/video.mp4"></video>','https://example.test/watch');
+ assert.deepEqual(page.media,[{type:'video',url:'https://example.test/video.mp4',thumbnailUrl:'https://example.test/frame.jpg'}]);
+});
+
+test('retains every discovered video without treating its page image as media',()=>{
+ const page=parsePage('<meta property="og:image" content="/poster.jpg"><video><source src="/video-1.mp4"></video><video><source src="/video-2.mp4"></video>','https://example.test/watch');
+ assert.deepEqual(page.media.map(media=>media.url),[
+  'https://example.test/video-1.mp4',
+  'https://example.test/video-2.mp4'
+ ]);
+ assert.ok(page.media.every(media=>media.type==='video'));
+});
+
+test('keeps actual page images alongside video media when both are present',()=>{
+ const page=parsePage('<meta property="og:image" content="/poster.jpg"><video poster="/frame.jpg"><source src="/video.mp4"></video><img src="/photo.jpg">','https://example.test/watch');
+ assert.deepEqual(page.media.map(media=>[media.type,media.url]),[
+  ['image','https://example.test/photo.jpg'],
+  ['video','https://example.test/video.mp4']
+ ]);
+});
+
+test('preserves video media when a page approaches the extraction limit',()=>{
+ const html=Array.from({length:extractorLimits.maxMedia},(_,index)=>`<img src="/image-${index}.jpg">`).join('')+'<video src="/video.mp4"></video>';
+ const page=parsePage(html,'https://example.test/watch');
+ assert.equal(page.media.length,extractorLimits.maxMedia);
+ assert.ok(page.media.some(media=>media.type==='video'&&media.url==='https://example.test/video.mp4'));
+ assert.equal(page.truncated,true);
 });
 
 test('rejects private, loopback, and mapped private IP addresses',async()=>{
@@ -100,6 +130,11 @@ test('sanitizes attachment filenames before returning download headers',()=>{
 test('rejects non-HTTP and private-network download targets',async()=>{
  await assert.rejects(downloadPublicMedia('ftp://example.test/file.jpg'),/Only public HTTP or HTTPS/);
  await assert.rejects(downloadPublicMedia('http://127.0.0.1/file.jpg'),/private or unavailable/);
+});
+
+test('streamed downloads reject non-HTTP and private-network targets',async()=>{
+ await assert.rejects(openPublicMedia('ftp://example.test/file.mp4'),/Only public HTTP or HTTPS/);
+ await assert.rejects(openPublicMedia('http://127.0.0.1/file.mp4'),/private or unavailable/);
 });
 
 test('creates approved public player URLs for supported social video links',()=>{

@@ -1,4 +1,4 @@
-:root{color-scheme:dark;--bg:#0b0b0c;--win:#1c1c1e;--side:#232325;--card:#2c2c2e;--line:#3a3a3c;--tx:#f2f2f7;--mu:#98989f;--ac:#0a84ff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+:root{color-scheme:dark;--bg:#0b0b0c;--win:#1c1c1e;--side:#232325;--card:#2c2c2e;--line:#3a3a3c;--tx:#f2f2f7;--mu:#98989f;--ac:#0a84ff}
 :root[data-theme="light"]{color-scheme:light;--bg:#f4f4f6;--win:#fff;--side:#fafafd;--card:#f1f1f4;--line:#dedee3;--tx:#202024;--mu:#686870;--ac:#0068d7}
 :root[data-theme="light"] .side{border-color:var(--line)}
 :root[data-theme="light"] .nv:hover{background:#00000008}
@@ -9,6 +9,9 @@
 :root[data-theme="light"] .box{background:var(--win)}
 :root[data-theme="light"] .card:hover{border-color:#a5a5ac}
 :root[data-theme="light"] .art{background:#e6e6eb}
+:root[data-theme="light"] .note-card .card-menu-button{color:var(--tx)}
+:root[data-theme="light"] .download-error{color:#b4232c}
+:root[data-theme="light"] #ts{background:#202024;color:#f2f2f7}
 html{scroll-padding-top:env(safe-area-inset-top,0px)}
 html,body{height:100%;margin:0}
 *{box-sizing:border-box}
@@ -255,7 +258,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 @media(max-width:900px){.grid{columns:4 150px}}
 @media(max-width:760px){
  body{padding:0;overflow:hidden}.win{border-radius:0;border:0;height:100dvh;min-height:0}
- .side{position:absolute;z-index:5;top:0;bottom:0;left:0;transform:translateX(-102%);transition:.2s;width:250px}
+ .side{position:absolute;z-index:5;top:0;bottom:0;left:0;transform:translateX(-102%);transition:.2s;width:250px;padding-top:calc(14px + env(safe-area-inset-top,0px));padding-bottom:calc(14px + env(safe-area-inset-bottom,0px))}
  .watch-content{padding:12px 10px 30px}
  .watch-stage{min-height:calc(100dvh - 178px);gap:2px}
  .watch-stage-content img,.watch-stage-content video{max-height:calc(100dvh - 230px)}
@@ -263,9 +266,9 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
  .watch-arrow{min-width:32px;padding:0 6px}
  .download-url-form{flex-direction:column}
  .win.open .side{transform:none}.win.open .scrim{display:block;position:absolute;inset:0;z-index:4;background:#0008}
- .win.hide .side{display:block}.top{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:7px;padding:10px}
+ .win.hide .side{display:block}.top{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:7px;padding:calc(10px + env(safe-area-inset-top,0px)) 10px 10px}
  .top h1{min-width:0}#q{grid-column:1/-1;width:100%;min-width:0}
- #main{padding:0 10px 12px}.grid{columns:2 135px;column-gap:9px}
+ #main{padding:0 10px calc(12px + env(safe-area-inset-bottom,0px))}.grid{columns:2 135px;column-gap:9px}
  .card{margin-bottom:9px}.top h1{font-size:13px}
  .st{opacity:1}.mobile-only{display:block}
  .box.wide{width:min(100%,640px)}.media-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
@@ -310,7 +313,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
  .focused-media-view .watch-stage-caption{position:relative;bottom:auto;margin:0 -8px}
  .watch-stage-caption .b{min-height:38px}
  .watch-heading span{max-width:none}
- .focused-view .watch-header{flex-wrap:nowrap;gap:8px;min-height:48px;padding:2px 8px;border-bottom:0;background:transparent;backdrop-filter:none}
+ .focused-view .watch-header{flex-wrap:nowrap;gap:8px;min-height:48px;padding:calc(2px + env(safe-area-inset-top,0px)) 8px 2px;border-bottom:0;background:transparent;backdrop-filter:none}
  .focused-view .watch-header>.b{min-height:34px;padding:0 10px;border-radius:9px;font-size:12px}
  .focused-view .watch-header>.watch-back-button{width:44px;min-width:44px;min-height:44px;height:44px;padding:0;border-radius:50%}
  .focused-view .watch-heading{flex:1;min-width:0}
@@ -341,3 +344,4 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 @keyframes gallery-slide-from-left{from{opacity:.65;transform:translateX(-20px)}to{opacity:1;transform:translateX(0)}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 @media(max-width:380px){.ib{min-width:31px;padding:0 6px}.tools>.b{padding:7px 9px}.watch-header{gap:6px}.watch-heading{flex-basis:calc(100% - 95px)}}
+@media(max-width:760px){.watch-controls{display:none}}
