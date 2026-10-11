@@ -3,7 +3,7 @@ import {openDB,migrateLegacy,loadLibrary,storeItem,storeSection,removeItem,remov
 import {previewUrl} from './importer.js';
 
 'use strict';
-const V={view:'all',sectionId:null,tag:null,q:'',type:'all',sort:'recent',selectMode:false,selected:new Set(),mediaIndex:-1,dialogItemId:null,dialogMode:'view',items:[],sections:[],downloads:[],downloadPreview:null,downloadError:'',downloadUrl:'',installPrompt:null,showHiddenMedia:false,preview:null,watch:null,watchScrollTimer:null,watchResizeObserver:null};
+const V={view:'all',sectionId:null,tag:null,q:'',type:'all',sort:'recent',selectMode:false,selected:new Set(),mediaIndex:-1,dialogItemId:null,dialogMode:'view',items:[],sections:[],downloads:[],downloadPreview:null,downloadError:'',downloadUrl:'',installPrompt:null,preview:null,watch:null,watchScrollTimer:null,watchResizeObserver:null};
 let appUpdatePending=false;
 let reloadingForAppUpdate=false;
 const icon=d=>`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
@@ -228,12 +228,12 @@ function startWatch(id){
 }
 function orderedMedia(item){return(item.media||[]).slice().sort((a,b)=>(a.position||0)-(b.position||0))}
 function mediaSource(media){return media.storedDataUrl||media.sourceUrl||''}
-function viewerMedia(item){const hidden=new Set(item.hiddenMediaUrls||[]);return orderedMedia(item).filter(media=>V.showHiddenMedia||!hidden.has(media.sourceUrl))}
+function viewerMedia(item){return orderedMedia(item)}
 function sourcePages(item){
  if(Array.isArray(item.sourcePages)&&item.sourcePages.length)return item.sourcePages.map((page,index)=>({...page,index,media:Array.isArray(page.media)?page.media:item.media.filter(media=>(media.pageIndex||0)===index)}));
  return[{url:item.sourceUrl||'',title:item.title||host(item.sourceUrl),description:item.description||'',media:orderedMedia(item),index:0}];
 }
-function watchPageMedia(item,page){const hidden=new Set(item.hiddenMediaUrls||[]);return(page.media||[]).filter(media=>V.showHiddenMedia||!hidden.has(media.sourceUrl))}
+function watchPageMedia(item,page){return page.media||[]}
 function defaultThumbnail(item){
  const hidden=new Set(item.hiddenMediaUrls||[]);
  const media=(item.media||[]).filter(entry=>!hidden.has(entry.sourceUrl));
@@ -358,7 +358,7 @@ function watchMediaTile(item,media,index){
  const poster=media.thumbnailUrl|| (media.type==='image'?media.sourceUrl:fallbackThumbnail('video'));
  const visual=media.embedUrl?`<img src="${esc(poster)}" alt="" loading="lazy"><span class="play-mark" aria-hidden="true">${media.type==='video'?'▶':'↗'}</span>`:media.type==='video'?`<video src="${esc(mediaSource(media))}" poster="${esc(poster)}" muted playsinline preload="none" tabindex="-1"></video><span class="play-mark" aria-hidden="true">▶</span>`:`<img src="${esc(mediaSource(media))}" alt="${esc(media.alt||item.title)}" loading="lazy" decoding="async">`;
  const hidden=(item.hiddenMediaUrls||[]).includes(media.sourceUrl),ratio=media.width&&media.height?Number(media.height)/Number(media.width):media.type==='video'?0.75:1;
- return`<div class="watch-tile-wrap" data-ratio="${Number.isFinite(ratio)&&ratio>0?ratio:1}"><button class="watch-tile" data-watch-media="${index}" aria-label="Open ${media.type} ${index+1}">${visual}</button><button class="watch-actions-toggle" data-watch-menu aria-label="Show media actions" aria-haspopup="menu" aria-expanded="false">${icon(icons.more)}</button><div class="watch-actions-menu" role="menu"><button class="watch-hide-button" role="menuitem" data-watch-hide="${esc(media.sourceUrl)}">${icon(icons.hide)}<span>${hidden?'Unhide':'Hide'} media</span></button>${downloadButton(item,media,`${icon(icons.download)}<span>Download</span>`,'watch-download-button media-download-button','menuitem')}</div></div>`;
+ return`<div class="watch-tile-wrap${hidden?' hidden-media':''}" data-ratio="${Number.isFinite(ratio)&&ratio>0?ratio:1}"><button class="watch-tile" data-watch-media="${index}" aria-label="Open ${media.type} ${index+1}${hidden?' (hidden)':''}">${visual}</button><button class="watch-actions-toggle" data-watch-menu aria-label="Show media actions" aria-haspopup="menu" aria-expanded="false">${icon(icons.more)}</button><div class="watch-actions-menu" role="menu"><button class="watch-hide-button" role="menuitem" data-watch-hide="${esc(media.sourceUrl)}">${icon(icons.hide)}<span>${hidden?`Unhide ${media.type}`:`Hide ${media.type}`}</span></button>${downloadButton(item,media,`${icon(icons.download)}<span>Download</span>`,'watch-download-button media-download-button','menuitem')}</div></div>`;
 }
 function layoutWatchGrid(grid){
  const style=getComputedStyle(grid),columns=style.gridTemplateColumns.trim().split(/\s+/).filter(Boolean).length,gap=parseFloat(style.columnGap)||12,width=(grid.clientWidth-gap*(columns-1))/columns,heights=Array(columns).fill(0);
@@ -384,10 +384,8 @@ function renderWatchPage(pushScroll=false,message=''){
  main.classList.toggle('focused-view',!!active&&!shouldShowGallery);
  main.classList.toggle('library-image-view',item.type==='image'&&!!active&&!shouldShowGallery);
  const pageTitle=page.title||item.title||host(page.url);
- const hiddenCount=(item.hiddenMediaUrls||[]).length;
  const pageControls=pages.length>1?`<div class="watch-page-buttons"><button class="b watch-page-button" data-watch-action="previousPage" aria-label="Previous URL" title="Previous URL"${watch.pageIndex===0?' disabled':''}>${icon('M15 18l-6-6 6-6')}</button><button class="b watch-page-button" data-watch-action="nextPage" aria-label="Next URL" title="Next URL"${watch.pageIndex===pages.length-1?' disabled':''}>${icon('M9 18l6-6-6-6')}</button></div>`:'';
- const hiddenControl=hiddenCount?`<button class="b" data-watch-action="toggleHidden">${V.showHiddenMedia?'Hide hidden':'Show hidden'} (${hiddenCount})</button>`:'';
- const controls=pageControls||hiddenControl?`<div class="watch-controls${pageControls?' has-page-navigation':''}">${pageControls}${hiddenControl}</div>`:'';
+ const controls=pageControls?`<div class="watch-controls has-page-navigation">${pageControls}</div>`:'';
  const hasGallery=['gallery','playlist'].includes(item.type)||media.length>1;
  const backAction=active&&hasGallery?'showGrid':'back';
  const backTarget=active&&hasGallery?'media gallery':'library';
@@ -397,7 +395,6 @@ function renderWatchPage(pushScroll=false,message=''){
  else if(active&&!shouldShowGallery)content=`<div class="watch-stage" data-swipe><button class="b watch-arrow previous" data-watch-action="previousMedia" aria-label="Previous photo"${watch.mediaIndex===0?' disabled':''}>‹</button><div class="watch-stage-content">${active.embedUrl?`<iframe src="${esc(active.embedUrl)}" title="${esc(active.alt||pageTitle)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`:active.type==='video'?`<video controls autoplay playsinline preload="metadata" poster="${esc(active.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(active))}">Video playback is unavailable in this browser.</video>`:`<img class="watch-active-image${watch.mediaDirection==='next'?' slide-from-right':watch.mediaDirection==='previous'?' slide-from-left':''}" src="${esc(mediaSource(active))}" alt="${esc(active.alt||pageTitle)}">`}</div><button class="b watch-arrow next" data-watch-action="nextMedia" aria-label="Next photo"${watch.mediaIndex===media.length-1?' disabled':''}>›</button></div><div class="watch-stage-caption"><span>${watch.mediaIndex+1} / ${media.length}</span>${active.type==='image'?'':`${downloadButton(item,active)}<button class="b" data-watch-hide="${esc(active.sourceUrl)}">${(item.hiddenMediaUrls||[]).includes(active.sourceUrl)?'Unhide':'Hide'} media</button>`}</div>`;
  else if(page.error)content=`<div class="watch-message">Could not load this URL: ${esc(page.error)}<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p><button class="b" data-watch-action="retry">Retry</button></div>`;
  else if(media.length)content=`<div class="watch-page-info"><span>${esc(pageTitle)} · ${media.length} items</span>${page.url?`<a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original</a>`:''}</div><div class="watch-grid">${media.map((entry,index)=>watchMediaTile(item,entry,index)).join('')}</div>`;
- else if(hiddenCount&&!V.showHiddenMedia)content=`<div class="watch-message">All media on this URL are hidden. Use “Show hidden” to restore them.</div>`;
  else content=`<div class="watch-message">${esc(message||'No images or videos were found on this page.')}${page.url?`<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p>`:''}</div>`;
  delete watch.mediaDirection;
  V.watchResizeObserver?.disconnect();V.watchResizeObserver=null;
@@ -421,11 +418,11 @@ function mediaTile(item,media,index){
   ?media.embedUrl?`<img src="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" alt="" loading="lazy" decoding="async"><span class="play-mark" aria-hidden="true">▶</span>`:`<video src="${esc(source)}" poster="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" muted playsinline preload="none" tabindex="-1"></video><span class="play-mark" aria-hidden="true">▶</span>`
   :media.embedUrl?`<img src="${esc(media.thumbnailUrl||fallbackThumbnail('social'))}" alt="" loading="lazy" decoding="async"><span class="play-mark" aria-hidden="true">↗</span>`:`<img src="${esc(source)}" alt="${esc(item.title)} — image ${index+1}" loading="lazy" decoding="async">`;
  const hidden=(item.hiddenMediaUrls||[]).includes(media.sourceUrl);
- return `<div class="media-tile ${media.type==='video'?'video-tile':''}">
+ return `<div class="media-tile ${media.type==='video'?'video-tile':''}${hidden?' hidden':''}">
  <button class="media-open" data-action="openMedia" data-index="${index}" aria-label="Open ${media.type} ${index+1} of ${item.media.length}">${visual}<span class="media-number">${index+1}</span></button>
  ${downloadUrl(media)?downloadButton(item,media):''}
  <button class="media-menu-button" data-media-menu aria-label="Media options" aria-haspopup="menu" aria-expanded="false">${icon(icons.more)}</button>
- <div class="media-menu"><button data-media-visibility="${esc(media.sourceUrl)}">${hidden?'Unhide media':'Hide this media'}</button></div></div>`;
+ <div class="media-menu" role="menu"><button role="menuitem" data-media-visibility="${esc(media.sourceUrl)}">${hidden?`Unhide ${media.type}`:`Hide ${media.type}`}</button></div></div>`;
 }
 function libraryImageViewer(item,image,index,total,backAction){
  const source=esc(mediaSource(image));
@@ -439,21 +436,19 @@ function renderItemViewer(item){
   if(focused.type==='image'&&!focused.embedUrl){imageViewMode=true;display=libraryImageViewer(item,focused,V.mediaIndex,media.length,'backToGallery')}
   else display=`<div class="focus-media">${focused.embedUrl?`<iframe src="${esc(focused.embedUrl)}" title="${esc(item.title)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen loading="lazy"></iframe>`:focused.type==='video'?`<video controls autoplay playsinline preload="metadata" poster="${esc(focused.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(focused))}">Video playback is unavailable in this browser.</video>`:`<img src="${esc(mediaSource(focused))}" alt="${esc(item.title)} — image ${V.mediaIndex+1}">`}</div><div class="bar media-navigation"><button class="b" data-action="mediaPrev" aria-label="Previous media">‹ Previous</button><span>${V.mediaIndex+1} / ${media.length}</span><button class="b" data-action="mediaNext" aria-label="Next media">Next ›</button></div><div class="row">${downloadButton(item,focused)}<button class="b" data-media-visibility="${esc(focused.sourceUrl)}">${(item.hiddenMediaUrls||[]).includes(focused.sourceUrl)?'Unhide':'Hide'} this media</button><button class="b" data-action="backToGallery">Back to ${item.type==='playlist'?'playlist':'gallery'}</button></div>`;
  }else if(shouldShowGallery||(!focused&&['gallery','playlist'].includes(item.type))){
-  const hiddenCount=(item.hiddenMediaUrls||[]).length;
-  display=`${hiddenCount?`<div class="row hidden-toggle"><button class="b" data-action="toggleHiddenMedia">${V.showHiddenMedia?'Hide hidden media':'Show hidden media'} (${hiddenCount})</button></div>`:''}<div class="media-grid">${media.map((entry,index)=>mediaTile(item,entry,index)).join('')||'<p class="hint">No visible media in this gallery.</p>'}</div>`;
+  const galleryMedia=orderedMedia(item);
+  display=`<div class="media-grid">${galleryMedia.map((entry,index)=>mediaTile(item,entry,index)).join('')||'<p class="hint">No media in this gallery.</p>'}</div>`;
  }else if(item.type==='video'&&media[0]){
   display=`<div class="focus-media">${media[0].embedUrl?`<iframe src="${esc(media[0].embedUrl)}" title="${esc(item.title)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`:`<video controls autoplay playsinline preload="metadata" poster="${esc(media[0].thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(media[0]))}">Video playback is unavailable in this browser.</video>`}</div><div class="row">${downloadButton(item,media[0])}<button class="b" data-media-visibility="${esc(media[0].sourceUrl)}">${(item.hiddenMediaUrls||[]).includes(media[0].sourceUrl)?'Unhide':'Hide'} this video</button></div>`;
  }else if(item.type==='image'&&media[0]){
   if(media[0].type==='image'&&!media[0].embedUrl){imageViewMode=true;display=libraryImageViewer(item,media[0],0,1,'close')}
   else display=`<div class="focus-media"><img src="${esc(mediaSource(media[0]))}" alt="${esc(item.title)}"></div><div class="row">${downloadButton(item,media[0])}<button class="b" data-media-visibility="${esc(media[0].sourceUrl)}">${(item.hiddenMediaUrls||[]).includes(media[0].sourceUrl)?'Unhide':'Hide'} this image</button></div>`;
- }else if(['image','video'].includes(item.type)&&(item.hiddenMediaUrls||[]).length){
-  display=`<div class="row"><span class="hint">This media is hidden.</span><button class="b" data-action="toggleHiddenMedia">Show hidden media</button></div>`;
  }else if(item.type==='bookmark'){
   const thumbnail=thumbUrl(item);
   display=thumbnail?`<div class="bookmark-preview"><img src="${esc(thumbnail)}" alt=""></div>`:'<div class="bookmark-preview bookmark-fallback" aria-hidden="true">WEB</div>';
  }
  const details=`<div class="viewer-copy"><h2>${esc(item.title)}</h2>${item.sourceDomain?`<div class="source">${esc(item.sourceDomain)}</div>`:''}${item.sourceUrl&&validUrl(item.sourceUrl)?`<button class="b" data-action="openSource" data-url="${esc(item.sourceUrl)}">Open original</button>`:''}${item.description?`<p>${esc(item.description)}</p>`:''}${item.notes?`<p class="viewer-notes">${esc(item.notes)}</p>`:''}${item.tags?.length?`<div class="tag-list">${item.tags.map(tag=>`<span>${esc(tag)}</span>`).join('')}</div>`:''}</div>`;
- show(imageViewMode?display:`<div class="viewer-head"><div><span class="bd-inline">${esc(item.type)}${['gallery','playlist'].includes(item.type)?` · ${media.length} visible ${item.type==='playlist'?'videos':'images'}`:''}</span></div><button class="ib" data-action="close" aria-label="Close viewer">×</button></div>${display}${details}`,true);
+ show(imageViewMode?display:`<div class="viewer-head"><div><span class="bd-inline">${esc(item.type)}${['gallery','playlist'].includes(item.type)?` · ${media.length} ${item.type==='playlist'?'videos':'images'}`:''}</span></div><button class="ib" data-action="close" aria-label="Close viewer">×</button></div>${display}${details}`,true);
  if(imageViewMode)$('#md').classList.add('image-view-mode');
 }
 function editItem(id){
@@ -631,7 +626,6 @@ $('#md').addEventListener('click',async e=>{
  else if(action==='previewPage')await previewPage();
  else if(action==='savePreview')await savePreview();
  else if(action==='toggleHiddenPreview'){if(V.preview){V.preview.showHidden=!V.preview.showHidden;previewPanel()}}
- else if(action==='toggleHiddenMedia'){V.showHiddenMedia=!V.showHiddenMedia;const item=V.items.find(x=>x.id===V.dialogItemId);if(item)renderItemViewer(item)}
  else if(action==='saveNote')await saveNote();
  else if(action==='saveImages')await saveImages();
  else if(action==='saveItem')await saveDetail(id);
@@ -683,7 +677,7 @@ $('#main').addEventListener('click',async e=>{
  if(downloadHistory){const record=V.downloads[Number(downloadHistory.dataset.downloadHistory)];if(record)await downloadMedia(record.url,{itemId:record.itemId,title:record.title,type:record.type,thumbnailUrl:record.thumbnailUrl});return}
  if(e.target.closest('[data-clear-downloads]')){V.downloads=[];storeDownloadHistory();render();return}
  const watchButton=e.target.closest('[data-watch-action]');
- if(watchButton&&V.watch){const action=watchButton.dataset.watchAction,item=V.items.find(entry=>entry.id===V.watch.itemId);if(action==='back'){V.watch=null;syncWatchUrl();$('#win').classList.remove('watch-mode');$('#main').classList.remove('full-viewer','focused-view');render();return}if(action==='edit'&&item){editItem(item.id);return}if(action==='retry'&&item){item.sourcePages=null;item.media=[];V.watch.loading=false;V.watch.retrying=false;V.watch.extractionAttempted=false;loadWatchPage(item);return}if(action==='toggleHidden'){V.showHiddenMedia=!V.showHiddenMedia;renderWatchPage();return}if(action==='previousPage'||action==='nextPage'){const count=sourcePages(item).length;V.watch.pageIndex=Math.max(0,Math.min(count-1,V.watch.pageIndex+(action==='previousPage'?-1:1)));V.watch.mediaIndex=-1;V.watch.scrollTop=0;syncWatchUrl();renderWatchPage(true);return}if(action==='previousMedia'||action==='nextMedia'){const page=sourcePages(item)[V.watch.pageIndex],media=watchPageMedia(item,page);V.watch.mediaIndex=Math.max(0,Math.min(media.length-1,V.watch.mediaIndex+(action==='previousMedia'?-1:1)));V.watch.mediaDirection=action==='nextMedia'?'next':'previous';syncWatchUrl();renderWatchPage();return}if(action==='showGrid'){V.watch.mediaIndex=-1;delete V.watch.mediaDirection;syncWatchUrl();renderWatchPage();return}}
+ if(watchButton&&V.watch){const action=watchButton.dataset.watchAction,item=V.items.find(entry=>entry.id===V.watch.itemId);if(action==='back'){V.watch=null;syncWatchUrl();$('#win').classList.remove('watch-mode');$('#main').classList.remove('full-viewer','focused-view');render();return}if(action==='edit'&&item){editItem(item.id);return}if(action==='retry'&&item){item.sourcePages=null;item.media=[];V.watch.loading=false;V.watch.retrying=false;V.watch.extractionAttempted=false;loadWatchPage(item);return} if(action==='previousPage'||action==='nextPage'){const count=sourcePages(item).length;V.watch.pageIndex=Math.max(0,Math.min(count-1,V.watch.pageIndex+(action==='previousPage'?-1:1)));V.watch.mediaIndex=-1;V.watch.scrollTop=0;syncWatchUrl();renderWatchPage(true);return}if(action==='previousMedia'||action==='nextMedia'){const page=sourcePages(item)[V.watch.pageIndex],media=watchPageMedia(item,page);V.watch.mediaIndex=Math.max(0,Math.min(media.length-1,V.watch.mediaIndex+(action==='previousMedia'?-1:1)));V.watch.mediaDirection=action==='nextMedia'?'next':'previous';syncWatchUrl();renderWatchPage();return}if(action==='showGrid'){V.watch.mediaIndex=-1;delete V.watch.mediaDirection;syncWatchUrl();renderWatchPage();return}}
  const watchHide=e.target.closest('[data-watch-hide]');if(watchHide&&V.watch){await toggleMediaVisibility(V.watch.itemId,watchHide.dataset.watchHide);return}
  const watchMediaButton=e.target.closest('[data-watch-media]');
  if(watchMediaButton&&V.watch){V.watch.mediaIndex=Number(watchMediaButton.dataset.watchMedia);V.watch.scrollTop=$('#main').scrollTop;syncWatchUrl();renderWatchPage();return}
