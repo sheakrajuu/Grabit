@@ -1,10 +1,10 @@
 import {$,esc,uid,host,validUrl,normalized,classify,fallbackThumbnail,socialMediaEmbed,videoCollectionTitle} from './utils.js';
 import {openDB,migrateLegacy,loadLibrary,storeItem,storeSection,removeItem,removeSection} from './storage.js';
 import {previewUrl,resolveVideoUrl,videoDownloadUrl} from './importer.js';
-import {createLibraryShareLink,hasLibraryShareLink,readLibraryShareLink} from './share.js';
+import {createItemShareData,createSectionShareData,createShortLibraryShareLink,hasLibraryShareLink,readLibraryShareLink} from './share.js';
 
 'use strict';
-const V={view:'all',sectionId:null,tag:null,q:'',type:'all',sort:'recent',selectMode:false,selected:new Set(),mediaIndex:-1,dialogItemId:null,dialogMode:'view',items:[],sections:[],downloads:[],downloadPreview:null,downloadError:'',downloadUrl:'',installPrompt:null,preview:null,showingHiddenMedia:false,watch:null,watchScrollTimer:null,watchResizeObserver:null};
+const V={view:'all',sectionId:null,tag:null,q:'',type:'all',sort:'recent',selectMode:false,selected:new Set(),mediaIndex:-1,dialogItemId:null,dialogMode:'view',items:[],sections:[],downloads:[],downloadPreview:null,downloadFilter:'all',downloadError:'',downloadUrl:'',installPrompt:null,preview:null,showingHiddenMedia:false,watch:null,watchScrollTimer:null,watchResizeObserver:null,shareData:null};
 let appUpdatePending=false;
 let reloadingForAppUpdate=false;
 const icon=d=>`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
@@ -105,7 +105,7 @@ function card(item){
  const image=item.type==='note'?'':`<img class="art" src="${esc(thumb)}" alt="" loading="lazy" decoding="async">`;
  return `<article class="card${item.type==='note'?' note-card':''}" data-id="${esc(item.id)}" tabindex="0" aria-label="${esc(item.title)}">
  ${image}<span class="bd">${labels[item.type]||'ITEM'}</span><div class="cap">${esc(item.title||'Untitled')}</div>${item.sourceDomain?`<div class="source">${esc(item.sourceDomain)}</div>`:''}
- <button class="card-menu-button" data-card-menu="${esc(item.id)}" aria-label="More actions for ${esc(item.title)}" aria-haspopup="menu" aria-expanded="false">${icon(icons.more)}</button><div class="card-menu" role="menu">${item.sectionIds?.length?`<button role="menuitem" data-card-action="allVisibility" data-id="${esc(item.id)}">${item.hiddenFromAll?'Show in All content':'Hide from All content'}</button>`:''}<button role="menuitem" data-card-action="edit" data-id="${esc(item.id)}">Edit</button><button role="menuitem" data-card-action="favorite" data-id="${esc(item.id)}">${item.isFavorite?'Remove favorite':'Add to favorites'}</button><button role="menuitem" data-card-action="archive" data-id="${esc(item.id)}">${item.isArchived?'Restore':'Archive'}</button><button role="menuitem" class="d" data-card-action="delete" data-id="${esc(item.id)}">Delete</button></div>${V.selectMode?`<input class="select-card" type="checkbox" data-select="${esc(item.id)}" aria-label="Select ${esc(item.title)}"${V.selected.has(item.id)?' checked':''} style="position:absolute;top:9px;left:9px;width:19px;height:19px;accent-color:var(--ac)">`:''}</article>`;
+ <button class="card-menu-button" data-card-menu="${esc(item.id)}" aria-label="More actions for ${esc(item.title)}" aria-haspopup="menu" aria-expanded="false">${icon(icons.more)}</button><div class="card-menu" role="menu">${item.sectionIds?.length?`<button role="menuitem" data-card-action="allVisibility" data-id="${esc(item.id)}">${item.hiddenFromAll?'Show in All content':'Hide from All content'}</button>`:''}<button role="menuitem" data-card-action="share" data-id="${esc(item.id)}">Share item…</button><button role="menuitem" data-card-action="edit" data-id="${esc(item.id)}">Edit</button><button role="menuitem" data-card-action="favorite" data-id="${esc(item.id)}">${item.isFavorite?'Remove favorite':'Add to favorites'}</button><button role="menuitem" data-card-action="archive" data-id="${esc(item.id)}">${item.isArchived?'Restore':'Archive'}</button><button role="menuitem" class="d" data-card-action="delete" data-id="${esc(item.id)}">Delete</button></div>${V.selectMode?`<input class="select-card" type="checkbox" data-select="${esc(item.id)}" aria-label="Select ${esc(item.title)}"${V.selected.has(item.id)?' checked':''} style="position:absolute;top:9px;left:9px;width:19px;height:19px;accent-color:var(--ac)">`:''}</article>`;
 }
 function positionCardMenu(menu,button){
  const margin=8,trigger=button.getBoundingClientRect(),bounds=menu.getBoundingClientRect();
@@ -128,7 +128,7 @@ function render(){
  const items=matchingItems();const main=$('#main');
  const types=['all','bookmark','image','video','gallery','playlist','note'];
  const typeLabels={all:'All types',bookmark:'Websites',image:'Images',video:'Videos',gallery:'Galleries',playlist:'Playlists',note:'Notes'};
- const actions=V.selectMode?`<button class="b" data-bulk="selectAll">Select all</button><button class="b" data-bulk="tag">Edit tags</button><button class="b" data-bulk="inbox">Move to Inbox</button><select class="in" id="bulkSection" aria-label="Move selected to section"><option value="">Move to section…</option>${V.sections.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('')}</select><button class="b d" data-bulk="delete">Delete</button><button class="b" data-bulk="done">Done</button>`:`<button class="b" id="selectMode">Select</button>`;
+ const actions=V.selectMode?`<button class="b" data-bulk="selectAll">Select all</button><button class="b" data-bulk="tag">Edit tags</button><button class="b" data-bulk="inbox">Move to Inbox</button><select class="in" id="bulkSection" aria-label="Move selected to section"><option value="">Move to section…</option>${V.sections.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('')}</select><button class="b d" data-bulk="delete">Delete</button><button class="b" data-bulk="done">Done</button>`:`${V.view==='section'?`<button class="b" data-share-section="${esc(V.sectionId||'')}">Share collection…</button>`:''}<button class="b" id="selectMode">Select</button>`;
  const toolbar=`<div class="tools"><select class="in" id="typeFilter" aria-label="Filter by content type">${types.map(t=>`<option value="${t}"${V.type===t?' selected':''}>${typeLabels[t]}</option>`).join('')}</select><select class="in" id="sortOrder" aria-label="Sort content"><option value="recent"${V.sort==='recent'?' selected':''}>Recently added</option><option value="oldest"${V.sort==='oldest'?' selected':''}>Oldest added</option><option value="alphabetical"${V.sort==='alphabetical'?' selected':''}>Alphabetical</option><option value="updated"${V.sort==='updated'?' selected':''}>Recently updated</option></select>${actions}</div>`;
  const empty=V.view==='inbox'?'Your Inbox is empty. Add a URL now and organize it later.':V.view==='favorites'?'Favorite items appear here.':V.view==='archived'?'No archived items.':V.view==='section'?'This section is empty. Add content or move items here.':'Your library is empty. Add a URL, note, or image to get started.';
  main.innerHTML=toolbar+(items.length?`<div class="grid">${items.map(card).join('')}</div>`:`<div class="empty">${V.q?`No results for “${esc(V.q)}”.`:esc(empty)}</div>`);
@@ -307,10 +307,12 @@ async function downloadMedia(url,{itemId='',title='Media',type='image',thumbnail
 function renderDownloadHistory(){
  const records=V.downloads;
  const downloads=V.downloadPreview;
+ const visibleMedia=downloads?downloads.media.filter(media=>V.downloadFilter==='all'||media.type===V.downloadFilter):[];
  const pageControls=downloads?.playlistPaging?`<div class="row download-page-controls" aria-label="Video list pages"><button class="b" data-download-page="${downloads.start-10}"${downloads.start<=1?' disabled':''}>Previous 10</button><span>Videos ${downloads.start}–${downloads.start+downloads.media.length-1}</span><button class="b" data-download-page="${downloads.start+10}"${downloads.hasMore?'':' disabled'}>Next 10</button></div>`:'';
- const content=downloads?downloads.media.length?`<h2 class="download-heading">${esc(downloads.title)} <span>${downloads.media.length} media candidate(s)</span></h2>${pageControls}<p class="hint">Candidates with known dimensions are listed highest-resolution first. Providers may restrict access, and Grabit cannot download protected or login-only media.</p>${downloads.warning?`<p class="hint" role="status">${esc(downloads.warning)}</p>`:''}${downloads.truncated?'<p class="hint" role="status">Only the first 500 media items are shown.</p>':''}<div class="download-discovery-grid">${downloads.media.map((media,index)=>`<article class="download-discovery-card"><div class="download-discovery-thumb">${media.type==='video'&&(media.embedUrl&&!media.playbackUrl)?`<img src="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" alt="" loading="lazy" decoding="async">`:`${media.type==='video'?`<video controls src="${esc(media.playbackUrl||media.url)}" poster="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" playsinline preload="none"></video>`:`<img src="${esc(media.thumbnailUrl||media.url)}" alt="" loading="lazy" decoding="async">`}`}</div><div class="download-discovery-copy"><strong>${esc(media.type==='video'?'Video':'Image')} ${index+1}${index===0?' · highest exposed quality':''}</strong><span>${media.width||media.height?`${media.width||'?'} × ${media.height||'?'} px · `:''}${esc(host(media.playbackUrl||media.url))}</span></div>${media.type==='video'&&(media.providerUrl||media.embedUrl)?`${!media.playbackUrl?`<button class="b" data-discovery-play="${index}">Try player</button>`:''}<button class="b p" data-discovery-download="${index}">Download with Grabit</button>`:media.embedUrl?`<p class="hint">This provider embed does not expose a downloadable media file.</p>`:`<button class="b p" data-discovery-download="${index}">Download${index===0?' highest listed quality':''}</button>`}</article>`).join('')}</div>`:`<div class="download-empty"><b>No downloadable media was exposed.</b><p>Some social posts provide an embed only, or require sign-in. Grabit does not bypass provider restrictions. Try a public page with directly accessible media.</p></div>`:'';
+ const content=downloads?visibleMedia.length?`<h2 class="download-heading">${esc(downloads.title)} <span>${visibleMedia.length} ${V.downloadFilter==='all'?'media candidate(s)':`${V.downloadFilter==='video'?'video':'image'} candidate(s)`}</span></h2>${pageControls}<p class="hint">Candidates with known dimensions are listed highest-resolution first. Providers may restrict access, and Grabit cannot download protected or login-only media.</p>${downloads.warning?`<p class="hint" role="status">${esc(downloads.warning)}</p>`:''}${downloads.truncated?'<p class="hint" role="status">Only the first 500 media items are shown.</p>':''}<div class="download-discovery-grid">${visibleMedia.map((media,index)=>`<article class="download-discovery-card"><div class="download-discovery-thumb">${media.type==='video'&&(media.embedUrl&&!media.playbackUrl)?`<img src="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" alt="" loading="lazy" decoding="async">`:`${media.type==='video'?`<video controls src="${esc(media.playbackUrl||media.url)}" poster="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" playsinline preload="none"></video>`:`<img src="${esc(media.thumbnailUrl||media.url)}" alt="" loading="lazy" decoding="async">`}`}</div><div class="download-discovery-copy"><strong>${esc(media.type==='video'?'Video':'Image')} ${index+1}${index===0?' · highest exposed quality':''}</strong><span>${media.width||media.height?`${media.width||'?'} × ${media.height||'?'} px · `:''}${esc(host(media.playbackUrl||media.url))}</span></div>${media.type==='video'&&(media.providerUrl||media.embedUrl)?`${!media.playbackUrl?`<button class="b" data-discovery-play="${index}">Try player</button>`:''}<button class="b p" data-discovery-download="${index}">Download with Grabit</button>`:media.embedUrl?`<p class="hint">This provider embed does not expose a downloadable media file.</p>`:`<button class="b p" data-discovery-download="${index}">Download${index===0?' highest listed quality':''}</button>`}</article>`).join('')}</div>`:`<div class="download-empty"><b>${downloads.media.length?'No '+(V.downloadFilter==='video'?'videos':'images')+' found in these results.':'No downloadable media was exposed.'}</b><p>${downloads.media.length?'Choose another type or try a different URL.':'Some social posts provide an embed only, or require sign-in. Grabit does not bypass provider restrictions. Try a public page with directly accessible media.'}</p></div>`:'';
+ const filters=`<div class="download-filters" role="group" aria-label="Media type filter">${[['all','Both'],['image','Images'],['video','Videos']].map(([type,label])=>`<button class="b${V.downloadFilter===type?' p':''}" type="button" data-download-filter="${type}" aria-pressed="${V.downloadFilter===type}">${label}</button>`).join('')}</div>`;
  const history=records.length?`<div class="download-history">${records.map((entry,index)=>`<article class="download-record"><img src="${esc(entry.thumbnailUrl||fallbackThumbnail(entry.type||'media'))}" alt="" loading="lazy"><div class="download-record-copy"><strong>${esc(entry.title||entry.filename||'Media download')}</strong><span>${esc(entry.filename||host(entry.url||''))} · ${esc(new Date(entry.downloadedAt).toLocaleString())}</span></div><button class="b" data-download-history="${index}">Download again</button></article>`).join('')}</div>`:'<p class="hint">Downloads started from this tool or saved media will appear here.</p>';
- $('#main').innerHTML=`<section class="download-tool"><h2>Download from a URL</h2><p class="hint">Paste a public webpage or video URL. Grabit checks for exposed media, then tries yt-dlp discovery for public pages supported by its extractors. Sign-in-only, DRM-protected, or provider-blocked videos are not supported.</p><form class="download-url-form" id="downloadUrlForm"><input class="in" id="downloadUrlInput" type="url" required maxlength="2048" autocomplete="url" placeholder="https://example.com/video" value="${esc(V.downloadUrl)}" aria-label="URL to find downloadable media"><button class="b p" type="submit"${V.downloadError==='loading'?' disabled':''}>${V.downloadError==='loading'?'Finding media…':'Find media'}</button></form>${V.downloadError&&V.downloadError!=='loading'?`<p class="download-error" role="alert">${esc(V.downloadError)}</p>`:''}${content}</section><section class="download-history-section"><div class="download-history-heading"><h2>Download history</h2><button class="b" data-clear-downloads${records.length?'':' disabled'}>Clear history</button></div>${history}</section>`;
+ $('#main').innerHTML=`<section class="download-tool"><h2>Download from a URL</h2><p class="hint">Paste a public webpage or video URL. Grabit checks for exposed media, then tries yt-dlp discovery for public pages supported by its extractors. Sign-in-only, DRM-protected, or provider-blocked videos are not supported.</p><form class="download-url-form" id="downloadUrlForm"><input class="in" id="downloadUrlInput" type="url" required maxlength="2048" autocomplete="url" placeholder="https://example.com/video" value="${esc(V.downloadUrl)}" aria-label="URL to find downloadable media"><button class="b p" type="submit"${V.downloadError==='loading'?' disabled':''}>${V.downloadError==='loading'?'Finding media…':'Find media'}</button></form>${filters}${V.downloadError&&V.downloadError!=='loading'?`<p class="download-error" role="alert">${esc(V.downloadError)}</p>`:''}${content}</section><section class="download-history-section"><div class="download-history-heading"><h2>Download history</h2><button class="b" data-clear-downloads${records.length?'':' disabled'}>Clear history</button></div>${history}</section>`;
 }
 async function discoverDownloads(start=1,rawUrl=''){
  const input=$('#downloadUrlInput'),url=validUrl(rawUrl||V.downloadUrl||input?.value||'');
@@ -325,7 +327,7 @@ async function discoverDownloads(start=1,rawUrl=''){
     catch(error){page={title:host(url.href),media:[],previewWarning:error.message||'The page preview failed.'}}
    }
   let media=(Array.isArray(page.media)?page.media:[]).filter(entry=>entry&&typeof entry.url==='string').sort((a,b)=>(Number(b.width||0)*Number(b.height||0))-(Number(a.width||0)*Number(a.height||0)));
-  if(!page.playlistPaging&&!media.some(entry=>entry.type==='video'&&(entry.playbackUrl||(!entry.providerUrl&&!entry.embedUrl)))){
+  if(V.downloadFilter!=='image'&&!page.playlistPaging&&!media.some(entry=>entry.type==='video'&&(entry.playbackUrl||(!entry.providerUrl&&!entry.embedUrl)))){
    try{media=[...media.filter(entry=>entry.type!=='video'),await resolveVideoUrl(url.href)]}
    catch(error){if(media.length)console.warn('yt-dlp could not resolve another video source:',error);else if(page.previewWarning)throw new Error(`${page.previewWarning} ${error.message}`);else throw error}
   }
@@ -761,8 +763,25 @@ function downloadJson(){
 function libraryExportData(){
  return{format:'grabit-library',version:1,exportedAt:new Date().toISOString(),storage:'metadata and local image data only; external media files are referenced by URL',sections:V.sections,items:V.items};
 }
+function shareDialog(data,title,description){
+ V.shareData=data;
+ show(`<b>${esc(title)}</b><p class="hint">${esc(description)} Shared library data is held by the server for 5 minutes; anyone with the link can read it. Use JSON for a permanent backup.</p><div class="row"><button class="b p" data-action="createShareLink">Create 5-minute share link</button><button class="b" data-action="close">Close</button></div><div id="shareLinkOutput" hidden><label for="shareLinkValue">Share link</label><textarea class="in" id="shareLinkValue" rows="2" readonly></textarea><div class="row"><button class="b" data-action="copyShareLink">Copy link</button></div></div>`);
+}
 function exportDialog(){
- show(`<b>Export library</b><p class="hint">Share a compressed link or download JSON. Anyone with the link can read it; large libraries may need JSON.</p><div class="row"><button class="b p" data-action="createShareLink">Create share link</button><button class="b" data-action="downloadExport">Download JSON</button><button class="b" data-action="restoreDialog">Import…</button><button class="b" data-action="close">Close</button></div><div id="shareLinkOutput" hidden><label for="shareLinkValue">Share link</label><textarea class="in" id="shareLinkValue" rows="4" readonly></textarea><div class="row"><button class="b" data-action="copyShareLink">Copy link</button></div></div>`);
+ V.shareData=null;
+ show(`<b>Export library</b><p class="hint">Create a short link or download JSON. Shared library data is held by the server for 5 minutes; anyone with the link can read it. Use JSON for a permanent backup.</p><div class="row"><button class="b p" data-action="createShareLink">Create 5-minute share link</button><button class="b" data-action="downloadExport">Download JSON</button><button class="b" data-action="restoreDialog">Import…</button><button class="b" data-action="close">Close</button></div><div id="shareLinkOutput" hidden><label for="shareLinkValue">Share link</label><textarea class="in" id="shareLinkValue" rows="2" readonly></textarea><div class="row"><button class="b" data-action="copyShareLink">Copy link</button></div></div>`);
+}
+function shareItem(id){
+ const item=V.items.find(entry=>entry.id===id);if(!item)return;
+ try{shareDialog(createItemShareData(libraryExportData(),id),`Share “${item.title||'Untitled'}”`,'Only this item will be included.');}
+ catch(error){reportError('Could not prepare this item for sharing',error)}
+}
+function shareSection(id){
+ const section=V.sections.find(entry=>entry.id===id);if(!section)return;
+ try{
+  const data=createSectionShareData(libraryExportData(),id),count=data.items.length;
+  shareDialog(data,`Share “${section.name}”`,`${count} item${count===1?'':'s'} from this collection will be included.`);
+ }catch(error){reportError('Could not prepare this collection for sharing',error)}
 }
 function restoreDialog(){
  show(`<b>Import library</b><p class="hint">Existing items stay; duplicates are skipped.</p><label for="shareLinkInput">Share link</label><textarea class="in" id="shareLinkInput" rows="2" placeholder="Paste a Grabit share link"></textarea><div class="row"><button class="b p" data-action="importShareLink">Import share link</button></div><label for="restoreFile">JSON backup</label><input class="in" id="restoreFile" type="file" accept="application/json,.json"><div class="row"><button class="b" data-action="restore">Import JSON backup</button><button class="b" data-action="exportDialog">Back</button></div>`);
@@ -775,19 +794,19 @@ async function createShareLink(){
  const button=$('[data-action="createShareLink"]');
  if(button){button.disabled=true;button.textContent='Preparing link…'}
  try{
-  const link=await createLibraryShareLink(libraryExportData(),location.href);
+  const link=await createShortLibraryShareLink(V.shareData||libraryExportData(),location.href);
   const output=$('#shareLinkOutput'),field=$('#shareLinkValue');
   if(!output||!field)return;
   field.value=link;output.hidden=false;
-  try{await navigator.clipboard.writeText(link);toast('Share link created and copied. Anyone with it can read your library.')}
-  catch(error){console.warn('Grabit could not copy the share link automatically:',error);field.focus();field.select();toast('Share link created. Copy it from the field above.')}
+  try{await navigator.clipboard.writeText(link);toast('Short share link created and copied. It expires in 5 minutes.')}
+  catch(error){console.warn('Grabit could not copy the share link automatically:',error);field.focus();field.select();toast('Short share link created. It expires in 5 minutes; copy it from the field above.')}
  }catch(error){console.error('Could not create a library share link:',error);toast(error.message||'Could not create a share link.')}
- finally{if(button?.isConnected){button.disabled=false;button.textContent='Create share link'}}
+ finally{if(button?.isConnected){button.disabled=false;button.textContent='Create 5-minute share link'}}
 }
 async function copyShareLink(){
  const field=$('#shareLinkValue');if(!field?.value){toast('Create a share link first.');return}
- try{await navigator.clipboard.writeText(field.value);toast('Share link copied. Anyone with it can read your library.')}
- catch(error){console.warn('Grabit could not copy the share link automatically:',error);field.focus();field.select();toast('Copy the selected share link.')}
+ try{await navigator.clipboard.writeText(field.value);toast('Share link copied. It expires 5 minutes after creation.')}
+ catch(error){console.warn('Grabit could not copy the share link automatically:',error);field.focus();field.select();toast('Copy the selected share link. It expires 5 minutes after creation.')}
 }
 async function importShareLink(){
  const value=$('#shareLinkInput')?.value.trim();if(!value){toast('Paste a Grabit share link first.');return}
@@ -892,16 +911,20 @@ $('#md').addEventListener('input',e=>{
  if(e.target.id==='urls'&&V.preview){V.preview=null;$('#extractionPreview').innerHTML='';const saveButton=$('#saveImportButton');if(saveButton)saveButton.textContent='Save URL(s)'}
 });
 $('#main').addEventListener('click',async e=>{
+ const shareSectionButton=e.target.closest('[data-share-section]');
+ if(shareSectionButton){shareSection(shareSectionButton.dataset.shareSection);return}
+ const downloadFilter=e.target.closest('[data-download-filter]');
+ if(downloadFilter){V.downloadFilter=downloadFilter.dataset.downloadFilter;renderDownloadHistory();return}
  const downloadPage=e.target.closest('[data-download-page]');
  if(downloadPage){await discoverDownloads(Number(downloadPage.dataset.downloadPage));return}
  const actionToggle=e.target.closest('[data-watch-menu]');
  if(actionToggle){const tile=actionToggle.closest('.watch-tile-wrap'),menu=tile.querySelector('.watch-actions-menu'),open=!tile.classList.contains('show-actions');document.querySelectorAll('.watch-tile-wrap.show-actions').forEach(item=>{item.classList.remove('show-actions');item.querySelector('.watch-actions-menu')?.classList.remove('align-left');item.querySelector('[data-watch-menu]')?.setAttribute('aria-expanded','false')});tile.classList.toggle('show-actions',open);if(open)menu.classList.toggle('align-left',tile.getBoundingClientRect().left<innerWidth/2);actionToggle.setAttribute('aria-expanded',String(open));return}
  if(!e.target.closest('.watch-tile-wrap.show-actions'))document.querySelectorAll('.watch-tile-wrap.show-actions').forEach(item=>{item.classList.remove('show-actions');item.querySelector('.watch-actions-menu')?.classList.remove('align-left');item.querySelector('[data-watch-menu]')?.setAttribute('aria-expanded','false')});
  const discovered=e.target.closest('[data-discovery-download]');
- if(discovered){const media=V.downloadPreview?.media[Number(discovered.dataset.discoveryDownload)];if(media)await downloadMedia(media.providerUrl||media.embedUrl||media.playbackUrl||media.url,{title:media.alt||V.downloadPreview.title,type:media.type,thumbnailUrl:media.thumbnailUrl||'',ytDlp:media.type==='video'&&!!(media.providerUrl||media.embedUrl)});return}
+ if(discovered){const media=V.downloadPreview?.media.filter(entry=>V.downloadFilter==='all'||entry.type===V.downloadFilter)[Number(discovered.dataset.discoveryDownload)];if(media)await downloadMedia(media.providerUrl||media.embedUrl||media.playbackUrl||media.url,{title:media.alt||V.downloadPreview.title,type:media.type,thumbnailUrl:media.thumbnailUrl||'',ytDlp:media.type==='video'&&!!(media.providerUrl||media.embedUrl)});return}
  const discoveryPlay=e.target.closest('[data-discovery-play]');
  if(discoveryPlay){
-  const media=V.downloadPreview?.media[Number(discoveryPlay.dataset.discoveryPlay)];
+  const media=V.downloadPreview?.media.filter(entry=>V.downloadFilter==='all'||entry.type===V.downloadFilter)[Number(discoveryPlay.dataset.discoveryPlay)];
   if(media)try{
    const resolved=await resolveVideoUrl(media.providerUrl||media.embedUrl||media.url),embedUrl=media.embedUrl;
    Object.assign(media,resolved);if(embedUrl)media.embedUrl=embedUrl;
@@ -945,6 +968,7 @@ $('#main').addEventListener('click',async e=>{
  const menuButton=e.target.closest('[data-card-menu]');if(menuButton){e.stopPropagation();const cardEl=menuButton.closest('.card'),menu=cardEl.querySelector('.card-menu'),open=!menu.classList.contains('open');closeCardMenus();if(open){menu.classList.add('open');cardEl.classList.add('menu-open');menuButton.setAttribute('aria-expanded','true');positionCardMenu(menu,menuButton)}return}
  const cardAction=e.target.closest('[data-card-action]');if(cardAction){e.stopPropagation();const id=cardAction.dataset.id,action=cardAction.dataset.cardAction,item=V.items.find(entry=>entry.id===id);if(!item)return;
   const menu=cardAction.closest('.card-menu');if(menu)closeCardMenus();
+  if(action==='share'){shareItem(id);return}
   if(action==='edit'){editItem(id);return}
   if(action==='favorite'){await toggleFavorite(id);return}
   if(action==='allVisibility'){item.hiddenFromAll=!item.hiddenFromAll;item.updatedAt=new Date().toISOString();try{await storeItem(item);await refreshLibrary();render();toast(item.hiddenFromAll?'Hidden from All content.':'Shown in All content.')}catch(error){reportError('Could not update All content visibility',error)}return}

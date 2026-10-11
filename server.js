@@ -3,6 +3,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {extractPage,openPublicMedia,safeDownloadFilename} from './server/extractor.js';
 import {extractVideoCollection,isVideoCollectionUrl,maxPlaylistItems,playlistPageSize,resolveVideo,startVideoDownload} from './server/playlist.js';
+import {createShareStore,MAX_SHARE_BYTES} from './server/share-store.js';
 import {classify,videoCollectionTitle} from './js/utils.js';
 
 const root=path.dirname(fileURLToPath(import.meta.url));
@@ -12,7 +13,9 @@ const MAX_BODY_BYTES=16*1024;
 const RATE_WINDOW_MS=60_000;
 const MAX_PREVIEWS_PER_WINDOW=12;
 const MAX_DOWNLOADS_PER_WINDOW=20;
+const MAX_SHARES_PER_WINDOW=10;
 const buckets=new Map();
+const shareStore=createShareStore();
 const publicFiles=new Set([
  '/library.html','/manifest.webmanifest','/service-worker.js',
  '/css/styles.css',
@@ -27,11 +30,14 @@ function send(response,status,payload){
 }
 
 function getClientAddress(request){return request.socket.remoteAddress||'unknown'}
+function pruneRateBuckets(now){
+ if(buckets.size>5000)for(const [address,state]of buckets)if(now-state.start>RATE_WINDOW_MS)buckets.delete(address);
+}
 function allowPreview(request){
  const key=getClientAddress(request),now=Date.now();let bucket=buckets.get(key);
  if(!bucket||now-bucket.start>RATE_WINDOW_MS){bucket={start:now,count:0};buckets.set(key,bucket)}
  bucket.count++;
- if(buckets.size>5000)for(const [address,state]of buckets)if(now-state.start>RATE_WINDOW_MS)buckets.delete(address);
+ pruneRateBuckets(now);
  return bucket.count<=MAX_PREVIEWS_PER_WINDOW;
 }
 
@@ -39,16 +45,25 @@ function allowDownload(request){
  const key=`download:${getClientAddress(request)}`,now=Date.now();let bucket=buckets.get(key);
  if(!bucket||now-bucket.start>RATE_WINDOW_MS){bucket={start:now,count:0};buckets.set(key,bucket)}
  bucket.count++;
+ pruneRateBuckets(now);
  return bucket.count<=MAX_DOWNLOADS_PER_WINDOW;
 }
 
-async function readJson(request){
+async function readJson(request,maxBytes=MAX_BODY_BYTES,limitMessage='Request body exceeds the 16 KB limit.'){
  const chunks=[];let length=0;
  for await(const chunk of request){
-  length+=chunk.length;if(length>MAX_BODY_BYTES)throw Object.assign(new Error('Request body exceeds the 16 KB limit.'),{status:413});
+  length+=chunk.length;if(length>maxBytes)throw Object.assign(new Error(limitMessage),{status:413});
   chunks.push(chunk);
  }
  try{return JSON.parse(Buffer.concat(chunks).toString('utf8'))}catch{throw Object.assign(new Error('Request body must contain valid JSON.'),{status:400})}
+}
+
+function allowShareCreation(request){
+ const key=`share:${getClientAddress(request)}`,now=Date.now();let bucket=buckets.get(key);
+ if(!bucket||now-bucket.start>RATE_WINDOW_MS){bucket={start:now,count:0};buckets.set(key,bucket)}
+ bucket.count++;
+ pruneRateBuckets(now);
+ return bucket.count<=MAX_SHARES_PER_WINDOW;
 }
 
 async function serveStatic(pathname,response){
@@ -65,6 +80,34 @@ async function serveStatic(pathname,response){
 const server=http.createServer(async(request,response)=>{
  const url=new URL(request.url,'http://localhost');
  if(url.pathname==='/api/health'&&request.method==='GET'){send(response,200,{ok:true});return}
+ if(url.pathname==='/api/shares'){
+  if(request.method!=='POST'){send(response,405,{error:'Use POST to create a share link.'});return}
+  if(!allowShareCreation(request)){send(response,429,{error:'Too many share links. Wait a minute and retry.'});return}
+  try{
+   const data=await readJson(request,MAX_SHARE_BYTES,'Shared library exceeds the 30 MB limit.');
+   if(data?.format!=='grabit-library'||data.version!==1||!Array.isArray(data.items)||!Array.isArray(data.sections)){
+    send(response,400,{error:'This is not a supported Grabit library.'});return;
+   }
+   const bytes=Buffer.byteLength(JSON.stringify(data));
+   const share=shareStore.create(data,bytes);
+   send(response,201,share);
+  }catch(error){send(response,error.status||400,{error:error.message||'Could not create a share link.'})}
+  return;
+ }
+ const shareMatch=url.pathname.match(/^\/api\/shares\/([A-Za-z0-9_-]{16})$/);
+ if(shareMatch){
+  if(request.method!=='GET'){send(response,405,{error:'Use GET to read a share link.'});return}
+  const data=shareStore.get(shareMatch[1]);
+  if(!data){send(response,404,{error:'This share link has expired or does not exist. Ask the sender to make a new link.'});return}
+  send(response,200,data);
+  return;
+ }
+ const shortLinkMatch=url.pathname.match(/^\/s\/([A-Za-z0-9_-]{16})$/);
+ if(shortLinkMatch){
+  if(request.method!=='GET'){response.writeHead(405,{'allow':'GET','cache-control':'no-store'}).end();return}
+  response.writeHead(302,{'location':`/library.html#grabit-share-id=${shortLinkMatch[1]}`,'cache-control':'no-store','referrer-policy':'no-referrer','x-content-type-options':'nosniff'}).end();
+  return;
+ }
  if(url.pathname==='/api/preview'){
   if(request.method!=='POST'){send(response,405,{error:'Use POST to preview a webpage.'});return}
   if(!allowPreview(request)){send(response,429,{error:'Too many preview requests. Wait a minute and retry.'});return}

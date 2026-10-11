@@ -108,6 +108,10 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .download-tool>p.hint{font-size:12px;margin:5px 0 12px}
 .download-url-form{display:flex;gap:8px;max-width:900px}
 .download-url-form .in{flex:1;min-width:0}
+.download-filters{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.download-filters>.b{min-width:82px}
+.download-page-controls{align-items:center}
+.download-page-controls>span{align-self:center;color:var(--mu)}
 .download-error{color:#ff6961}
 .download-empty{margin:24px 0;padding:18px;border:1px solid var(--line);border-radius:10px;background:var(--card)}
 .download-empty p{color:var(--mu)}
