@@ -54,9 +54,9 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .watch-heading span,.watch-page-info,.watch-stage-caption{color:var(--mu);font-size:12px}
 .watch-controls{display:flex;align-items:center;gap:7px}
 .watch-page-buttons{display:flex;align-items:center;gap:6px}
-.watch-header>.watch-page-button{display:grid;place-items:center;width:34px;height:34px;min-width:34px;padding:0;border:0;border-radius:50%;background:none;box-shadow:none}
-.watch-header>.watch-page-button:hover{border:0;background:none;color:var(--ac)}
-.watch-page-button svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.watch-page-buttons>.watch-page-button{display:grid;place-items:center;width:40px;height:40px;min-width:40px;padding:0;border:0;border-radius:0;background:transparent;color:var(--tx);box-shadow:none;cursor:pointer}
+.watch-page-buttons>.watch-page-button:hover,.watch-page-buttons>.watch-page-button:active{border:0;background:transparent;color:var(--ac);box-shadow:none}
+.watch-page-button svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .watch-page-button:disabled{opacity:.45;cursor:not-allowed}
 .watch-content{width:min(1600px,100%);margin:0 auto;padding:10px 16px 32px}
 .watch-content.focused-media-view{display:flex;flex:1;flex-direction:column;min-height:0;width:100%;padding:0 16px}
@@ -65,8 +65,11 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .watch-grid{position:relative;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,190px),1fr));align-items:start;column-gap:12px;row-gap:12px}
 .watch-tile-wrap{position:absolute;display:block;min-width:0;margin:0;border-radius:12px;overflow:visible;background:var(--card)}
 .watch-tile-wrap.show-actions{z-index:5}
-.watch-tile-wrap.hidden-media .watch-tile{filter:grayscale(.85);opacity:.55}
 .watch-tile{display:block;width:100%;height:100%;padding:0;overflow:hidden;border:0;border-radius:inherit;background:transparent;cursor:zoom-in}
+.watch-tile:disabled{cursor:default}
+.hidden-media-placeholder{display:grid;place-items:center;width:100%;height:100%;min-height:120px;padding:16px;background:linear-gradient(145deg,var(--card),color-mix(in srgb,var(--card) 72%,var(--mu)));color:var(--mu);font-size:13px;font-weight:600;text-align:center}
+.hidden-media-view{display:grid;place-items:center;min-height:180px}
+.hidden-media-view .hidden-media-placeholder{width:min(100%,520px);min-height:180px;border-radius:12px}
 .watch-tile img,.watch-tile video{display:block;width:100%;height:100%;object-fit:cover;background:var(--card);pointer-events:none}
 .watch-tile .play-mark{pointer-events:none}
 .watch-actions-toggle{position:absolute;top:8px;right:8px;z-index:3;display:grid;place-items:center;width:36px;height:36px;padding:0;border:0;border-radius:50%;background:transparent;color:#fff;cursor:pointer;opacity:0;visibility:hidden;transition:opacity .14s}
@@ -215,7 +218,10 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .media-tile{display:block;position:relative;z-index:0;min-width:0;padding:0;overflow:visible;border:1px solid transparent;border-radius:11px;background:#303033;cursor:pointer;text-align:left}
 .media-tile.menu-open{z-index:5}
 .media-open{display:block;position:relative;width:100%;padding:0;overflow:hidden;border:0;border-radius:10px;background:transparent;cursor:pointer;text-align:left}
-.media-tile.hidden{opacity:.48;filter:grayscale(1)}
+.media-tile.hidden{background:var(--card)}
+.media-open:disabled{cursor:default}
+.watch-hidden-toggle{padding:0;border:0;background:transparent;color:var(--mu);font-size:12px;white-space:nowrap;cursor:pointer}
+.watch-hidden-toggle:hover,.watch-hidden-toggle:active{border:0;background:transparent;color:var(--ac)}
 .media-menu-button{position:absolute;top:7px;right:7px;z-index:3;display:grid;place-items:center;width:32px;height:32px;padding:0;border:0;border-radius:50%;background:#111c;color:white;cursor:pointer;opacity:0}
 .media-menu-button svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 1px 2px #000)}
 .media-tile:hover .media-menu-button,.media-tile:focus-within .media-menu-button{opacity:1}
@@ -290,22 +296,23 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
  .download-record>.b{width:100%}
  .watch-page-info,.watch-stage-caption{flex-wrap:wrap;justify-content:center;text-align:center}
  .watch-stage-caption>*{max-width:100%}
- .watch-controls{flex:1 0 100%;flex-wrap:wrap}
+ .watch-controls{flex:0 0 auto;flex-wrap:nowrap;margin-left:auto}
  .watch-controls .b{flex:1 1 auto}
  .focus-media img,.focus-media video{max-height:58vh}
  .card-menu-button{opacity:1}.media-menu-button{opacity:1}
  .watch-header{gap:6px;padding:2px 8px}
- .watch-header{flex-wrap:wrap}
+ .watch-header{flex-wrap:nowrap}
  .watch-header>.b{min-height:32px;padding:0 9px;border-radius:9px;font-size:12px;line-height:1}
  .watch-header>.watch-back-button{width:44px;min-width:44px;min-height:44px;height:44px;padding:0;border-radius:50%;background:transparent}
  .watch-header>.watch-back-button:hover{background:transparent}
+ .watch-page-buttons>.watch-page-button{width:44px;height:44px;min-width:44px}
  .watch-back-icon{width:19px;height:19px}
  .watch-header>.watch-back-button span{display:none}
  .watch-heading{flex:1 1 0;min-width:0}
  .watch-heading strong{font-size:12px;line-height:1.15}
  .watch-heading span{font-size:10px;line-height:1.15}
  .watch-heading span{max-width:35vw}
- .watch-controls{gap:4px;flex:1 0 100%;justify-content:flex-end}
+ .watch-controls{gap:4px;flex:0 0 auto;flex-wrap:nowrap;justify-content:flex-end;margin-left:auto}
  .watch-controls .b{padding:6px}
  .watch-content{padding:8px 8px 24px}
  .watch-grid{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:9px;row-gap:9px}
