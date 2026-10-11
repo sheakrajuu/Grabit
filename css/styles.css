@@ -324,7 +324,9 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
  .focused-view .watch-header>.b{min-height:34px;padding:0 10px;border-radius:9px;font-size:12px}
  .focused-view .watch-header>.watch-back-button{width:44px;min-width:44px;min-height:44px;height:44px;padding:0;border-radius:50%}
  .focused-view .watch-heading{flex:1;min-width:0}
- .focused-view .watch-heading,.focused-view .watch-controls{display:none}
+ .focused-view .watch-heading{display:none}
+ .focused-view .watch-controls:not(.has-page-navigation){display:none}
+ .focused-view .watch-controls.has-page-navigation{display:flex;flex:0 0 auto;margin-left:auto}
  .watch-content.focused-media-view{padding:0}
  .focused-media-view{padding:0}
  .focused-media-view .watch-stage{min-height:0}
@@ -351,4 +353,3 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 @keyframes gallery-slide-from-left{from{opacity:.65;transform:translateX(-20px)}to{opacity:1;transform:translateX(0)}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 @media(max-width:380px){.ib{min-width:31px;padding:0 6px}.tools>.b{padding:7px 9px}.watch-header{gap:6px}.watch-heading{flex-basis:calc(100% - 95px)}}
-@media(max-width:760px){.watch-controls{display:none}}

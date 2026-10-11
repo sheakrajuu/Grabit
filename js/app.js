@@ -387,7 +387,7 @@ function renderWatchPage(pushScroll=false,message=''){
  const hiddenCount=(item.hiddenMediaUrls||[]).length;
  const pageControls=pages.length>1?`<div class="watch-page-buttons"><button class="b watch-page-button" data-watch-action="previousPage" aria-label="Previous URL" title="Previous URL"${watch.pageIndex===0?' disabled':''}>${icon('M15 18l-6-6 6-6')}</button><button class="b watch-page-button" data-watch-action="nextPage" aria-label="Next URL" title="Next URL"${watch.pageIndex===pages.length-1?' disabled':''}>${icon('M9 18l6-6-6-6')}</button></div>`:'';
  const hiddenControl=hiddenCount?`<button class="b" data-watch-action="toggleHidden">${V.showHiddenMedia?'Hide hidden':'Show hidden'} (${hiddenCount})</button>`:'';
- const controls=pageControls||hiddenControl?`<div class="watch-controls">${pageControls}${hiddenControl}</div>`:'';
+ const controls=pageControls||hiddenControl?`<div class="watch-controls${pageControls?' has-page-navigation':''}">${pageControls}${hiddenControl}</div>`:'';
  const hasGallery=['gallery','playlist'].includes(item.type)||media.length>1;
  const backAction=active&&hasGallery?'showGrid':'back';
  const backTarget=active&&hasGallery?'media gallery':'library';

@@ -80,6 +80,13 @@ test('rejects private, loopback, and mapped private IP addresses',async()=>{
  }
 });
 
+test('rejects hexadecimal IPv4-mapped IPv6 addresses that point to private networks',async()=>{
+ for(const address of ['::ffff:7f00:1','::ffff:a00:1','::ffff:c0a8:101']){
+  assert.equal(await resolvePublicAddress(address),null,address);
+ }
+ assert.deepEqual(await resolvePublicAddress('::ffff:808:808'),{address:'::ffff:808:808',family:6});
+});
+
 test('rejects hostnames with any private DNS answer',async()=>{
  const result=await resolvePublicAddress('mixed.example',async()=>[
   {address:'203.0.113.10',family:4},

@@ -20,7 +20,16 @@ function isPrivateAddress(address){
   const value=address.toLowerCase().split('%')[0];
   if(value==='::'||value==='::1'||value.startsWith('fc')||value.startsWith('fd')||/^fe[89ab]/.test(value)||value.startsWith('ff')||value.startsWith('2001:db8'))return true;
   const mapped=value.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  return mapped?isPrivateAddress(mapped[1]):false;
+  if(mapped)return isPrivateAddress(mapped[1]);
+  const [left,right='']=value.split('::');
+  const leftGroups=left?left.split(':'):[];
+  const rightGroups=right?right.split(':'):[];
+  const groups=[...leftGroups,...Array(8-leftGroups.length-rightGroups.length).fill('0'),...rightGroups].map(part=>Number.parseInt(part,16));
+  if(groups.length===8&&groups.slice(0,5).every(part=>part===0)&&groups[5]===0xffff){
+   const ipv4=[groups[6]>>8,groups[6]&255,groups[7]>>8,groups[7]&255].join('.');
+   return isPrivateAddress(ipv4);
+  }
+  return false;
  }
  return true;
 }

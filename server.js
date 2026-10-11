@@ -11,6 +11,12 @@ const RATE_WINDOW_MS=60_000;
 const MAX_PREVIEWS_PER_WINDOW=12;
 const MAX_DOWNLOADS_PER_WINDOW=20;
 const buckets=new Map();
+const publicFiles=new Set([
+ '/library.html','/manifest.webmanifest','/service-worker.js',
+ '/css/styles.css',
+ '/js/app.js','/js/importer.js','/js/storage.js','/js/utils.js',
+ '/icons/git.svg','/icons/android/icon-192.png','/icons/android/icon-512.png','/icons/apple/AppIcon-180.png'
+]);
 const types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.webmanifest':'application/manifest+json; charset=utf-8','.svg':'image/svg+xml','.png':'image/png'};
 
 function send(response,status,payload){
@@ -46,6 +52,7 @@ async function readJson(request){
 async function serveStatic(pathname,response){
  let decoded;try{decoded=decodeURIComponent(pathname)}catch{response.writeHead(400).end('Bad request');return}
  const relative=decoded==='/'?'/library.html':decoded;
+ if(!publicFiles.has(relative)){response.writeHead(404,{'content-type':'text/plain; charset=utf-8','x-content-type-options':'nosniff'}).end('Not found');return}
  const target=path.resolve(root,`.${relative}`);
  if(target!==root&&!target.startsWith(root+path.sep)){response.writeHead(403).end('Forbidden');return}
  let file;try{file=await import('node:fs/promises').then(fs=>fs.readFile(target))}catch{response.writeHead(404,{'content-type':'text/plain; charset=utf-8'}).end('Not found');return}
