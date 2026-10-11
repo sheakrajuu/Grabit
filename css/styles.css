@@ -52,6 +52,10 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .watch-heading strong,.watch-heading span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .watch-heading span,.watch-page-info,.watch-stage-caption{color:var(--mu);font-size:12px}
 .watch-controls{display:flex;align-items:center;gap:7px}
+.watch-page-buttons{display:flex;align-items:center;gap:6px}
+.watch-page-button{display:grid;place-items:center;width:34px;height:34px;min-width:34px;padding:0;border-radius:50%;border:1px solid var(--line);background:transparent}
+.watch-page-button svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.watch-page-button:disabled{opacity:.45;cursor:not-allowed}
 .watch-content{width:min(1600px,100%);margin:0 auto;padding:10px 16px 32px}
 .watch-content.focused-media-view{display:flex;flex:1;flex-direction:column;min-height:0;width:100%;padding:0 16px}
 .watch-page-info,.watch-stage-caption{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px}
