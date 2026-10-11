@@ -40,7 +40,8 @@ export function parseYtDlpOutput(output){
   const pageUrl=publicHttpUrl(rawPageUrl);
   const directUrl=publicHttpUrl(rawMediaUrl);
   if(!pageUrl&&!directUrl)continue;
-  const key=pageUrl||directUrl;
+  const stableUrl=pageUrl||directUrl;
+  const key=stableUrl;
   if(seen.has(key))continue;
   seen.add(key);
   const streamUrl=directUrl&&directUrl!==pageUrl?directUrl:'';
@@ -50,9 +51,9 @@ export function parseYtDlpOutput(output){
   const thumbnailUrl=publicHttpUrl(rawThumbnail);
   media.push({
    type:'video',
-   url:streamUrl||pageUrl,
-   sourceUrl:streamUrl||pageUrl,
-   ...(streamUrl?'':{embedUrl:pageUrl}),
+   url:stableUrl,
+   sourceUrl:stableUrl,
+   ...(streamUrl?{playbackUrl:streamUrl}:{embedUrl:stableUrl}),
    thumbnailUrl,
    alt:title
   });
@@ -76,7 +77,7 @@ export function parseYtDlpPlaylist(output){
 
 function runYtDlp(url,{flat=false,items=[]}={}){
  const command=process.env.PYTHON|| (process.platform==='win32'?'python':'python3');
- const outputTemplate='%(title)j\t%(webpage_url)s\tNA\t%(thumbnail)s';
+ const outputTemplate='%(title)j\t%(webpage_url)s\t%(url)s\t%(thumbnail)s';
  const args=[
   '-m','yt_dlp',
   '--ignore-config',
@@ -86,7 +87,7 @@ function runYtDlp(url,{flat=false,items=[]}={}){
   '--skip-download',
  ];
  if(flat)args.push('--flat-playlist','--playlist-end',String(MAX_PLAYLIST_ITEMS),'--print','%(webpage_url)s');
- else args.push('--playlist-items',items.join(','),'--print',outputTemplate);
+ else args.push('--format','best[ext=mp4]/best[ext=webm]/best','--playlist-items',items.join(','),'--print',outputTemplate);
  args.push('--',url);
  return new Promise((resolve,reject)=>{
   const child=spawn(command,args,{windowsHide:true,stdio:['ignore','pipe','pipe']});
@@ -144,11 +145,14 @@ export async function extractVideoCollection(rawUrl,{start=1}={}){
  const address=await resolvePublicAddress(url.hostname);
  if(!address)throw new Error('This video-list website resolves to a private or unavailable network address.');
  const targetUrl=ytDlpTargetUrl(url.href);
- const listing=await runYtDlp(targetUrl,{flat:true});
+ const itemIndexes=Array.from({length:Math.min(PLAYLIST_PAGE_SIZE,MAX_PLAYLIST_ITEMS-start+1)},(_,index)=>start+index);
+ const [listing,result]=await Promise.all([
+  runYtDlp(targetUrl,{flat:true}),
+  runYtDlp(targetUrl,{items:itemIndexes})
+ ]);
  const playlist=parseYtDlpPlaylist(listing.output);
  const selected=playlist.slice(start-1,start-1+PLAYLIST_PAGE_SIZE);
  if(!selected.length)throw new Error(listing.warning?`yt-dlp did not expose any playable videos from this page. ${listing.warning}`:'yt-dlp did not expose any playable videos from this page.');
- const result=await runYtDlp(targetUrl,{items:selected.map(item=>item.index)});
  const parsed=parseYtDlpOutput(result.output);
  const mediaByUrl=new Map(parsed.media.map(media=>[media.sourceUrl,media]));
  const media=selected.map(item=>mediaByUrl.get(item.url)).filter(Boolean);

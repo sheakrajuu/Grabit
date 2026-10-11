@@ -29,8 +29,9 @@ test('parses yt-dlp video results as playable media and safe embeds',()=>{
  assert.equal(result.media.length,4);
  assert.deepEqual(result.media[0],{
   type:'video',
-  url:'https://cdn.example/first.mp4',
-  sourceUrl:'https://cdn.example/first.mp4',
+  url:'https://xhamster.com/videos/first',
+  sourceUrl:'https://xhamster.com/videos/first',
+  playbackUrl:'https://cdn.example/first.mp4',
   thumbnailUrl:'https://cdn.example/first.jpg',
   alt:'First video'
  });

@@ -150,7 +150,7 @@ function previewPanel(){
  const sections=state.pages.map((page,pageIndex)=>{
   const available=page.media.map((media,mediaIndex)=>({media,mediaIndex})).filter(({media})=>state.showHidden||!page.hiddenUrls.has(media.url));
   const tiles=available.map(({media,mediaIndex})=>`<div class="media-tile ${media.type==='video'?'video-tile':''}">
-   ${media.type==='video'&&media.embedUrl?`<img src="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" alt="" loading="lazy" decoding="async"><span class="play-mark" aria-hidden="true">▶</span>`:media.type==='video'?`<video src="${esc(media.url)}" poster="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" muted playsinline preload="none" tabindex="-1"></video>`:`<img src="${esc(media.thumbnailUrl||media.url)}" alt="${esc(media.alt||`Image ${mediaIndex+1}`)}" loading="lazy" decoding="async">`}
+   ${media.type==='video'&&media.embedUrl?`<img src="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" alt="" loading="lazy" decoding="async"><span class="play-mark" aria-hidden="true">▶</span>`:media.type==='video'?`<video src="${esc(media.playbackUrl||media.url)}" poster="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" muted playsinline preload="none" tabindex="-1"></video>`:`<img src="${esc(media.thumbnailUrl||media.url)}" alt="${esc(media.alt||`Image ${mediaIndex+1}`)}" loading="lazy" decoding="async">`}
    <label class="media-select"><input type="checkbox" data-preview-page="${pageIndex}" data-preview-select="${esc(media.url)}"${page.selected.has(media.url)?' checked':''}> Select</label>
    <button class="media-menu-button" data-preview-page="${pageIndex}" data-preview-hide="${esc(media.url)}" aria-label="${page.hiddenUrls.has(media.url)?'Unhide':'Hide'} this media">${page.hiddenUrls.has(media.url)?'Unhide':'Hide'}</button>
   </div>`).join('');
@@ -246,7 +246,7 @@ function startWatch(id){
  syncWatchUrl(!existing);renderWatchPage(true);
 }
 function orderedMedia(item){return(item.media||[]).slice().sort((a,b)=>(a.position||0)-(b.position||0))}
-function mediaSource(media){return media.storedDataUrl||media.sourceUrl||''}
+function mediaSource(media){return media.storedDataUrl||media.playbackUrl||media.sourceUrl||''}
 function viewerMedia(item){return orderedMedia(item)}
 function sourcePages(item){
  if(Array.isArray(item.sourcePages)&&item.sourcePages.length)return item.sourcePages.map((page,index)=>({...page,index,media:Array.isArray(page.media)?page.media:item.media.filter(media=>(media.pageIndex||0)===index)}));
@@ -266,7 +266,7 @@ function defaultThumbnail(item){
  const video=media.find(entry=>entry.type==='video');
  return video?.thumbnailUrl||video?.storedDataUrl||fallbackThumbnail(item.type);
 }
-function downloadUrl(media){return media.downloadUrl||(!media.embedUrl?media.sourceUrl:'')}
+function downloadUrl(media){return media.downloadUrl||(!media.embedUrl?(media.playbackUrl||media.sourceUrl):'')}
 function downloadButton(item,media,label='Download',className='b media-download-button',role=''){
  const url=downloadUrl(media);
  const target=url?`data-download-url="${esc(url)}"`:media.storedDataUrl?`data-download-local="${esc(media.id)}"`:'';
@@ -296,7 +296,7 @@ async function downloadMedia(url,{itemId='',title='Media',type='image',thumbnail
 function renderDownloadHistory(){
  const records=V.downloads;
  const downloads=V.downloadPreview;
- const content=downloads?downloads.media.length?`<h2 class="download-heading">${esc(downloads.title)} <span>${downloads.media.length} media candidate(s)</span></h2><p class="hint">Candidates with known dimensions are listed highest-resolution first. Providers may restrict access, and Grabit cannot download protected or login-only media.</p>${downloads.warning?`<p class="hint" role="status">${esc(downloads.warning)}</p>`:''}${downloads.truncated?'<p class="hint" role="status">Only the first 500 media items are shown.</p>':''}<div class="download-discovery-grid">${downloads.media.map((media,index)=>`<article class="download-discovery-card"><div class="download-discovery-thumb">${media.type==='video'?`<video src="${esc(media.url)}" poster="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" muted playsinline preload="none"></video>`:`<img src="${esc(media.thumbnailUrl||media.url)}" alt="" loading="lazy" decoding="async">`}</div><div class="download-discovery-copy"><strong>${esc(media.type==='video'?'Video':'Image')} ${index+1}${index===0?' · highest exposed quality':''}</strong><span>${media.width||media.height?`${media.width||'?'} × ${media.height||'?'} px · `:''}${esc(host(media.url))}</span></div>${media.embedUrl?`<p class="hint">This is a provider embed; a downloadable file URL was not exposed.</p>`:`<button class="b p" data-discovery-download="${index}">Download${index===0?' highest listed quality':''}</button>`}</article>`).join('')}</div>`:`<div class="download-empty"><b>No downloadable media was exposed.</b><p>Some social posts provide an embed only, or require sign-in. Grabit does not bypass provider restrictions. Try a public page with directly accessible media.</p></div>`:'';
+ const content=downloads?downloads.media.length?`<h2 class="download-heading">${esc(downloads.title)} <span>${downloads.media.length} media candidate(s)</span></h2><p class="hint">Candidates with known dimensions are listed highest-resolution first. Providers may restrict access, and Grabit cannot download protected or login-only media.</p>${downloads.warning?`<p class="hint" role="status">${esc(downloads.warning)}</p>`:''}${downloads.truncated?'<p class="hint" role="status">Only the first 500 media items are shown.</p>':''}<div class="download-discovery-grid">${downloads.media.map((media,index)=>`<article class="download-discovery-card"><div class="download-discovery-thumb">${media.type==='video'?`<video src="${esc(media.playbackUrl||media.url)}" poster="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" muted playsinline preload="none"></video>`:`<img src="${esc(media.thumbnailUrl||media.url)}" alt="" loading="lazy" decoding="async">`}</div><div class="download-discovery-copy"><strong>${esc(media.type==='video'?'Video':'Image')} ${index+1}${index===0?' · highest exposed quality':''}</strong><span>${media.width||media.height?`${media.width||'?'} × ${media.height||'?'} px · `:''}${esc(host(media.playbackUrl||media.url))}</span></div>${media.embedUrl?`<p class="hint">This is a provider embed; a downloadable file URL was not exposed.</p>`:`<button class="b p" data-discovery-download="${index}">Download${index===0?' highest listed quality':''}</button>`}</article>`).join('')}</div>`:`<div class="download-empty"><b>No downloadable media was exposed.</b><p>Some social posts provide an embed only, or require sign-in. Grabit does not bypass provider restrictions. Try a public page with directly accessible media.</p></div>`:'';
  const history=records.length?`<div class="download-history">${records.map((entry,index)=>`<article class="download-record"><img src="${esc(entry.thumbnailUrl||fallbackThumbnail(entry.type||'media'))}" alt="" loading="lazy"><div class="download-record-copy"><strong>${esc(entry.title||entry.filename||'Media download')}</strong><span>${esc(entry.filename||host(entry.url||''))} · ${esc(new Date(entry.downloadedAt).toLocaleString())}</span></div><button class="b" data-download-history="${index}">Download again</button></article>`).join('')}</div>`:'<p class="hint">Downloads started from this tool or saved media will appear here.</p>';
  $('#main').innerHTML=`<section class="download-tool"><h2>Download from a URL</h2><p class="hint">Enter a public webpage, image, or video URL. Grabit will list media URLs exposed by the page and offer direct downloads when the server can access them. Supported XHamster/XHOfficial creator video lists are scanned with yt-dlp, up to 500 videos.</p><form class="download-url-form" id="downloadUrlForm"><input class="in" id="downloadUrlInput" type="url" required maxlength="2048" autocomplete="url" placeholder="https://example.com/gallery" value="${esc(V.downloadUrl)}" aria-label="URL to find downloadable media"><button class="b p" type="submit"${V.downloadError==='loading'?' disabled':''}>${V.downloadError==='loading'?'Finding media…':'Find media'}</button></form>${V.downloadError&&V.downloadError!=='loading'?`<p class="download-error" role="alert">${esc(V.downloadError)}</p>`:''}${content}</section><section class="download-history-section"><div class="download-history-heading"><h2>Download history</h2><button class="b" data-clear-downloads${records.length?'':' disabled'}>Clear history</button></div>${history}</section>`;
 }
@@ -365,6 +365,34 @@ async function loadWatchPage(item){
   for(let index=0;index<urls.length;index++){
    const url=urls[index];if(!url||!validUrl(url))continue;
    const saved=savedPages.find(page=>normalized(page.url)===normalized(url));
+   if(saved?.playlistPaging){
+    const start=saved.playlistStart||1;
+    try{
+     const result=await previewUrl(url,{start});
+     const refreshedMedia=result.media.filter(media=>media.type==='video').map((media,position)=>({
+      ...media,
+      sourceUrl:media.sourceUrl||media.url,
+      position:start-1+position,
+      pageIndex:index
+     }));
+     const end=start-1+10;
+     const retainedMedia=(saved.media||[]).filter(media=>media.position<start-1||media.position>=end);
+     const refreshedByPosition=new Map(refreshedMedia.map(media=>[media.position,media]));
+     const media=[...retainedMedia,...Array.from(refreshedByPosition.values())].sort((a,b)=>a.position-b.position);
+     const hiddenUrls=new Set(item.hiddenMediaUrls||[]);
+     for(const oldMedia of (saved.media||[]).filter(media=>media.position>=start-1&&media.position<end)){
+      if(hiddenUrls.has(oldMedia.sourceUrl)){
+       hiddenUrls.delete(oldMedia.sourceUrl);
+       hiddenUrls.add(oldMedia.embedUrl||oldMedia.sourceUrl);
+      }
+     }
+     item.hiddenMediaUrls=[...hiddenUrls];
+     pages.push({...saved,index,playlistStart:result.start||start,playlistHasMore:result.hasMore===true,playlistHasMoreByStart:{...(saved.playlistHasMoreByStart||{}),[start]:result.hasMore===true},mediaWarning:result.mediaWarning||'',media,extracted:true});
+    }catch(error){
+     pages.push({...saved,index,mediaWarning:`Could not refresh this video list: ${error.message}`});
+    }
+    continue;
+   }
    if(saved?.extracted&&!saved.refetchOnOpen){pages.push({...saved,index,media:(saved.media||[]).map(media=>({...media,type:media.type||'image',sourceUrl:media.sourceUrl||media.url||'',position:media.position||0,pageIndex:index}))});continue}
    try{pages.push({...await extractPageForWatch(url),index,extracted:true})}
    catch(error){
@@ -391,13 +419,26 @@ async function loadPlaylistBatch(item,page,start){
   const result=await previewUrl(sourcePage.url,{start});
   const videos=result.media.filter(media=>media.type==='video');
   if(!videos.length)throw new Error('No videos were returned for this playlist page.');
-  const known=new Set(sourcePage.media.map(media=>media.sourceUrl));
-  sourcePage.media.push(...videos.map((media,index)=>({
+  const batchEnd=start+9;
+  const previousBatch=sourcePage.media.filter(media=>media.position>=start-1&&media.position<=batchEnd);
+  const hiddenUrls=new Set(item.hiddenMediaUrls||[]);
+  for(const oldMedia of previousBatch){
+   if(hiddenUrls.has(oldMedia.sourceUrl)){
+    hiddenUrls.delete(oldMedia.sourceUrl);
+    hiddenUrls.add(oldMedia.embedUrl||oldMedia.sourceUrl);
+   }
+  }
+  item.hiddenMediaUrls=[...hiddenUrls];
+  const refreshedMedia=videos.map((media,index)=>({
    ...media,
    sourceUrl:media.sourceUrl||media.url,
    position:start-1+index,
    pageIndex:sourcePage.index
-  })).filter(media=>!known.has(media.sourceUrl)));
+  }));
+  sourcePage.media=[
+   ...sourcePage.media.filter(media=>media.position<start-1||media.position>batchEnd),
+   ...refreshedMedia
+  ].sort((a,b)=>a.position-b.position);
   sourcePage.playlistStart=start;sourcePage.playlistHasMore=result.hasMore===true;sourcePage.playlistHasMoreByStart={...(sourcePage.playlistHasMoreByStart||{}),[start]:result.hasMore===true};sourcePage.mediaWarning=result.mediaWarning||'';
   item.media=item.sourcePages.flatMap(source=>source.media);
   item.thumbnailUrl=item.thumbnailUrl||sourcePage.media.find(media=>media.thumbnailUrl)?.thumbnailUrl||fallbackThumbnail('playlist');
@@ -408,7 +449,8 @@ async function loadPlaylistBatch(item,page,start){
  }
 }
 async function changePlaylistBatch(item,page,start){
- if(start>=1&&start<=500&&page.media.some(media=>media.position>=start-1&&media.position<start+9)){
+ const cachedMedia=page.media.filter(media=>media.position>=start-1&&media.position<start+9);
+ if(start>=1&&start<=500&&cachedMedia.length&&cachedMedia.every(media=>media.playbackUrl)){
   page.playlistStart=start;page.playlistHasMore=page.playlistHasMoreByStart?.[start]??page.media.some(media=>media.position>=start+9);
   item.updatedAt=new Date().toISOString();
   try{await storeItem(item);await refreshLibrary()}catch(error){reportError('Could not save playlist position',error);return}
@@ -464,7 +506,7 @@ function renderWatchPage(pushScroll=false,message=''){
  if(message)content=`<div class="watch-message">${esc(message)}${item.sourceUrl?`<p><a href="${esc(item.sourceUrl)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p>`:''}<button class="b" data-watch-action="retry">Retry</button></div>`;
  else if(active&&!shouldShowGallery)content=`<div class="watch-stage" data-swipe><button class="b watch-arrow previous" data-watch-action="previousMedia" aria-label="Previous photo"${watch.mediaIndex===0?' disabled':''}>‹</button><div class="watch-stage-content">${activeHidden?`<span class="hidden-media-placeholder">${active.type==='video'?'Hidden video':'Hidden image'}</span>`:active.embedUrl?`<iframe src="${esc(active.embedUrl)}" title="${esc(active.alt||pageTitle)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`:active.type==='video'?`<video controls autoplay playsinline preload="metadata" poster="${esc(active.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(active))}">Video playback is unavailable in this browser.</video>`:`<img class="watch-active-image${watch.mediaDirection==='next'?' slide-from-right':watch.mediaDirection==='previous'?' slide-from-left':''}" src="${esc(mediaSource(active))}" alt="${esc(active.alt||pageTitle)}">`}</div><button class="b watch-arrow next" data-watch-action="nextMedia" aria-label="Next photo"${watch.mediaIndex===media.length-1?' disabled':''}>›</button></div><div class="watch-stage-caption"><span>${watch.mediaIndex+1} / ${media.length}</span>${activeHidden?`<button class="b" data-watch-hide="${esc(active.sourceUrl)}">Unhide ${active.type}</button>`:active.type==='image'?'':`${downloadButton(item,active)}<button class="b" data-watch-hide="${esc(active.sourceUrl)}">Hide ${active.type}</button>`}</div>`;
  else if(page.error&&!media.length)content=`<div class="watch-message">Could not load this URL: ${esc(page.error)}<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p><button class="b" data-watch-action="retry">Retry</button></div>`;
- else if(media.length)content=`<div class="watch-page-info"><span>${esc(pageTitle)} · ${watch.showingHidden?`${hiddenMedia.length} hidden items`:`${feedMedia.length} items`}</span>${page.url?`<a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original</a>`:''}${hiddenMedia.length||watch.showingHidden?`<button class="watch-hidden-toggle" data-watch-action="${watch.showingHidden?'showGalleryFeed':'showHiddenMedia'}">${watch.showingHidden?'Back to gallery':`Hidden items (${hiddenMedia.length})`}</button>`:''}</div>${[page.mediaWarning,page.previewWarning,page.truncated?'Only the first 500 media items are shown.':''].filter(Boolean).map(warning=>`<p class="hint" role="status">${esc(warning)}</p>`).join('')}${displayedMedia.length?`<div class="watch-grid">${displayedMedia.map(({entry,index})=>watchMediaTile(item,entry,index)).join('')}</div>`:`<div class="watch-message">${watch.showingHidden?'There are no hidden media on this URL.':'No visible media. Open Hidden items to manage hidden media.'}</div>`}`;
+ else if(media.length)content=`<div class="watch-page-info"><span>${esc(pageTitle)} · ${watch.showingHidden?`${hiddenMedia.length} hidden items`:`${feedMedia.length} items`}</span>${page.url?`<a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original</a>`:''}${hiddenMedia.length||watch.showingHidden?`<button class="watch-hidden-toggle" data-watch-action="${watch.showingHidden?'showGalleryFeed':'showHiddenMedia'}">${watch.showingHidden?'Back to gallery':`Hidden items (${hiddenMedia.length})`}</button>`:''}</div>${item.type==='playlist'?'':[page.mediaWarning,page.previewWarning,page.truncated?'Only the first 500 media items are shown.':''].filter(Boolean).map(warning=>`<p class="hint" role="status">${esc(warning)}</p>`).join('')}${displayedMedia.length?`<div class="watch-grid">${displayedMedia.map(({entry,index})=>watchMediaTile(item,entry,index)).join('')}</div>`:`<div class="watch-message">${watch.showingHidden?'There are no hidden media on this URL.':'No visible media. Open Hidden items to manage hidden media.'}</div>`}`;
  else content=`<div class="watch-message">${esc(message||'No images or videos were found on this page.')}${page.url?`<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p>`:''}</div>`;
  delete watch.mediaDirection;
  V.watchResizeObserver?.disconnect();V.watchResizeObserver=null;
@@ -802,7 +844,7 @@ $('#main').addEventListener('click',async e=>{
  if(actionToggle){const tile=actionToggle.closest('.watch-tile-wrap'),menu=tile.querySelector('.watch-actions-menu'),open=!tile.classList.contains('show-actions');document.querySelectorAll('.watch-tile-wrap.show-actions').forEach(item=>{item.classList.remove('show-actions');item.querySelector('.watch-actions-menu')?.classList.remove('align-left');item.querySelector('[data-watch-menu]')?.setAttribute('aria-expanded','false')});tile.classList.toggle('show-actions',open);if(open)menu.classList.toggle('align-left',tile.getBoundingClientRect().left<innerWidth/2);actionToggle.setAttribute('aria-expanded',String(open));return}
  if(!e.target.closest('.watch-tile-wrap.show-actions'))document.querySelectorAll('.watch-tile-wrap.show-actions').forEach(item=>{item.classList.remove('show-actions');item.querySelector('.watch-actions-menu')?.classList.remove('align-left');item.querySelector('[data-watch-menu]')?.setAttribute('aria-expanded','false')});
  const discovered=e.target.closest('[data-discovery-download]');
- if(discovered){const media=V.downloadPreview?.media[Number(discovered.dataset.discoveryDownload)];if(media&&!media.embedUrl)await downloadMedia(media.url,{title:V.downloadPreview.title,type:media.type,thumbnailUrl:media.thumbnailUrl||''});return}
+ if(discovered){const media=V.downloadPreview?.media[Number(discovered.dataset.discoveryDownload)];if(media&&!media.embedUrl)await downloadMedia(media.playbackUrl||media.url,{title:V.downloadPreview.title,type:media.type,thumbnailUrl:media.thumbnailUrl||''});return}
  const downloadButton=e.target.closest('[data-download-url],[data-download-local]');
  if(downloadButton){
   const actionMenu=downloadButton.closest('.watch-actions-menu');
