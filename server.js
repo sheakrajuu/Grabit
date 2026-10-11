@@ -2,8 +2,8 @@ import http from 'node:http';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {extractPage,openPublicMedia,safeDownloadFilename} from './server/extractor.js';
-import {extractVideoCollection,isVideoCollectionUrl} from './server/playlist.js';
-import {videoCollectionTitle} from './js/utils.js';
+import {extractVideoCollection,isVideoCollectionUrl,maxPlaylistItems,playlistPageSize,resolveVideo,startVideoDownload} from './server/playlist.js';
+import {classify,videoCollectionTitle} from './js/utils.js';
 
 const root=path.dirname(fileURLToPath(import.meta.url));
 const host=process.env.HOST||(process.env.PORT?'0.0.0.0':'127.0.0.1');
@@ -58,7 +58,7 @@ async function serveStatic(pathname,response){
  const target=path.resolve(root,`.${relative}`);
  if(target!==root&&!target.startsWith(root+path.sep)){response.writeHead(403).end('Forbidden');return}
  let file;try{file=await import('node:fs/promises').then(fs=>fs.readFile(target))}catch{response.writeHead(404,{'content-type':'text/plain; charset=utf-8'}).end('Not found');return}
- response.writeHead(200,{'content-type':types[path.extname(target)]||'application/octet-stream','x-content-type-options':'nosniff','referrer-policy':'no-referrer','content-security-policy':"default-src 'self' data: blob:; img-src 'self' https: data:; media-src 'self' https: blob:; frame-src 'self' https://xhamster.com https://www.youtube-nocookie.com https://player.vimeo.com https://www.tiktok.com https://www.instagram.com https://platform.twitter.com https://www.facebook.com https://assets.pinterest.com; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"});
+ response.writeHead(200,{'content-type':types[path.extname(target)]||'application/octet-stream','x-content-type-options':'nosniff','referrer-policy':'no-referrer','content-security-policy':"default-src 'self' data: blob:; img-src 'self' https: data:; media-src 'self' https: blob:; frame-src https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"});
  response.end(file);
 }
 
@@ -72,22 +72,76 @@ const server=http.createServer(async(request,response)=>{
    const payload=await readJson(request);
    if(typeof payload.url!=='string'||payload.url.length>2048){send(response,400,{error:'Provide a valid webpage URL shorter than 2048 characters.'});return}
    let result;
-   if(isVideoCollectionUrl(payload.url)){
-    const start=payload.start??1;
-    if(!Number.isSafeInteger(start)||start<1||start>500||((start-1)%10)!==0){send(response,400,{error:'Playlist position must start at 1, 11, 21, and so on, up to 491.'});return}
-    try{
-     const collection=await extractVideoCollection(payload.url,{start});
-     const media=collection.media.map((entry,index)=>({...entry,position:start-1+index}));
-     result={title:videoCollectionTitle(payload.url)||new URL(payload.url).hostname,description:'',canonicalUrl:payload.url,media,mediaCount:media.length,start:collection.start,hasMore:collection.hasMore,truncated:false,refetchOnOpen:true,...(collection.warning?{mediaWarning:collection.warning}:{})};
-    }catch(error){
-     let page;
-     try{page=await extractPage(payload.url)}catch(pageError){page={title:new URL(payload.url).hostname,description:'',canonicalUrl:payload.url,media:[],mediaCount:0,truncated:false,previewWarning:pageError.message}}
-     if(!page.media?.length)throw error;
-     result={...page,refetchOnOpen:true,mediaWarning:`yt-dlp could not list every video: ${error.message}`};
-    }
-   }else result=await extractPage(payload.url);
+   const start=payload.start??1;
+   if(!Number.isSafeInteger(start)||start<1||start>maxPlaylistItems||((start-1)%playlistPageSize)!==0){send(response,400,{error:`Playlist position must start at 1 and advance in groups of ${playlistPageSize}, up to ${maxPlaylistItems-playlistPageSize+1}.`});return}
+   const url=new URL(payload.url),knownCollection=isVideoCollectionUrl(payload.url);
+   const shouldDiscoverCollection=knownCollection||payload.start!==undefined||classify(payload.url)==='bookmark';
+   let page,collection,collectionError,pageError;
+   if(shouldDiscoverCollection){
+    const [pageResult,collectionResult]=await Promise.allSettled([
+     extractPage(payload.url),
+     extractVideoCollection(payload.url,{start})
+    ]);
+    if(pageResult.status==='fulfilled')page=pageResult.value;
+    else pageError=pageResult.reason;
+    if(collectionResult.status==='fulfilled')collection=collectionResult.value;
+    else collectionError=collectionResult.reason;
+   }else page=await extractPage(payload.url);
+   if(collection){
+    const media=collection.media.map((entry,index)=>({...entry,position:start-1+index}));
+    result={
+     ...(page||{}),
+     title:page?.title||videoCollectionTitle(payload.url)||url.hostname,
+     description:page?.description||'',
+     canonicalUrl:page?.canonicalUrl||payload.url,
+     media,
+     mediaCount:media.length,
+     start:collection.start,
+     hasMore:collection.hasMore,
+     playlistPaging:collection.playlistPaging,
+     truncated:collection.truncated||!!page?.truncated,
+     refetchOnOpen:true,
+     ...(collection.warning?{mediaWarning:collection.warning}:{})
+    };
+   }else if(page){
+    result=page;
+    if(knownCollection&&collectionError)result={...page,refetchOnOpen:true,mediaWarning:`yt-dlp could not list every video: ${collectionError.message}`};
+   }else throw collectionError||pageError||new Error('Could not preview this public URL.');
    send(response,200,result);
   }catch(error){send(response,error.status||422,{error:error.message||'Page extraction failed.'})}
+  return;
+ }
+ if(url.pathname==='/api/video/resolve'){
+  if(request.method!=='POST'){send(response,405,{error:'Use POST to resolve a video URL.'});return}
+  if(!allowPreview(request)){send(response,429,{error:'Too many preview requests. Wait a minute and retry.'});return}
+  try{
+   const payload=await readJson(request);
+   if(typeof payload.url!=='string'||payload.url.length>2048){send(response,400,{error:'Provide a video URL shorter than 2048 characters.'});return}
+   send(response,200,{media:await resolveVideo(payload.url)});
+  }catch(error){send(response,error.status||422,{error:error.message||'Could not find a playable video.'})}
+  return;
+ }
+ if(url.pathname==='/api/video/download'){
+  if(request.method!=='GET'){send(response,405,{error:'Use GET to download a video.'});return}
+  if(!allowDownload(request)){send(response,429,{error:'Too many downloads. Wait a minute and retry.'});return}
+  let child;
+  try{
+   const mediaUrl=url.searchParams.get('url')||'';
+   if(mediaUrl.length>2048){send(response,400,{error:'Provide a video URL shorter than 2048 characters.'});return}
+   const media=await resolveVideo(mediaUrl);
+   child=await startVideoDownload(mediaUrl,media.formatId);
+   const downloadTitle=(url.searchParams.get('title')||media.alt||'video').slice(0,240);
+   const filename=safeDownloadFilename(`${downloadTitle}.${media.extension}`);
+   const contentTypes={mp4:'video/mp4',webm:'video/webm',mov:'video/quicktime'};
+   response.writeHead(200,{'content-type':contentTypes[media.extension]||'application/octet-stream','content-disposition':`attachment; filename="${filename.replace(/["\\]/g,'_')}"; filename*=UTF-8''${encodeURIComponent(filename)}`,'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'});
+   response.on('close',()=>{if(!response.writableFinished)child.kill()});
+   child.stdout.pipe(response);
+   child.on('error',error=>{console.error('Video download process failed:',error);response.destroy(error)});
+   child.on('close',code=>{if((code!==0||child.videoDownloadTimedOut)&&!response.writableFinished)response.destroy(new Error(child.videoDownloadTimedOut?'The video download timed out.':`yt-dlp video download exited with status ${code}.`))});
+  }catch(error){
+   if(child)child.kill();
+   if(response.headersSent)response.destroy(error);else send(response,error.status||422,{error:error.message||'Video download failed.'});
+  }
   return;
  }
  if(url.pathname==='/api/download'){

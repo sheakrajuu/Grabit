@@ -1,6 +1,6 @@
 import {$,esc,uid,host,validUrl,normalized,classify,fallbackThumbnail,socialMediaEmbed,videoCollectionTitle} from './utils.js';
 import {openDB,migrateLegacy,loadLibrary,storeItem,storeSection,removeItem,removeSection} from './storage.js';
-import {previewUrl} from './importer.js';
+import {previewUrl,resolveVideoUrl,videoDownloadUrl} from './importer.js';
 import {createLibraryShareLink,hasLibraryShareLink,readLibraryShareLink} from './share.js';
 
 'use strict';
@@ -21,6 +21,15 @@ function reloadForAppUpdate(){
  if([...document.querySelectorAll('input[type="file"]')].some(input=>input.files?.length))return;
  appUpdatePending=false;reloadingForAppUpdate=true;location.reload();
 }
+const watchPlayback=main.querySelector('[data-watch-playback]');
+if(watchPlayback)watchPlayback.addEventListener('error',()=>{
+ const failedItem=V.items.find(entry=>entry.id===watch.itemId);if(!failedItem)return;
+ const failedPage=sourcePages(failedItem)[watch.pageIndex],failedMedia=watchPageMedia(failedItem,failedPage)[watch.mediaIndex];
+ if(!failedMedia)return;
+ failedMedia.playbackUrl='';
+ renderWatchPage();
+ toast('This stream cannot play directly here. Try the provider player or original page.');
+},{once:true});
 function watchForAppUpdates(){
  if(!('serviceWorker'in navigator))return;
  let hadController=Boolean(navigator.serviceWorker.controller);
@@ -197,7 +206,7 @@ async function savePreview(){
  const existingItems=V.items.filter(item=>state.pages.some(page=>item.canonicalUrl===page.canonicalUrl||normalized(item.sourceUrl)===page.canonicalUrl||item.sourceUrls?.some(saved=>normalized(saved)===page.canonicalUrl)));
  const hiddenMediaUrls=[...new Set([...existingItems.flatMap(item=>item.hiddenMediaUrls||[]),...state.pages.flatMap(page=>[...page.hiddenUrls])])];
  const savedMedia=state.pages.flatMap((page,pageIndex)=>page.media.filter(media=>page.selected.has(media.url)||page.hiddenUrls.has(media.url)).map(media=>({...media,pageIndex,hidden:page.hiddenUrls.has(media.url)})));
- const isVideoCollection=Boolean(videoCollectionTitle(firstPage.url));
+ const isVideoCollection=Boolean(videoCollectionTitle(firstPage.url)||firstPage.playlistPaging);
  if(isVideoCollection&&!savedMedia.some(media=>media.type==='video')){toast('Select at least one video to save this playlist.');return}
  const title=$('#importTitle').value.trim()||firstPage.title||host(firstPage.url);
  const description=$('#importDescription').value.trim()||firstPage.description||'';
@@ -205,7 +214,7 @@ async function savePreview(){
   const selectedMedia=savedMedia.filter(entry=>!entry.hidden);
   const allVideos=selectedMedia.length>0&&selectedMedia.every(media=>media.type==='video');
   const type=isVideoCollection?'playlist':!selectedMedia.length?'bookmark':state.pages.length===1&&selectedMedia.length===1?selectedMedia[0].type:allVideos?'playlist':'gallery';
-  const item=emptyItem({type, title,description,sourceUrl:firstPage.url,media:savedMedia.map((entry,position)=>({type:entry.type,sourceUrl:entry.url,embedUrl:entry.embedUrl||'',thumbnailUrl:entry.thumbnailUrl||'',alt:entry.alt||'',width:entry.width,height:entry.height,hidden:entry.hidden,position:entry.position??position,pageIndex:entry.pageIndex})),thumbnailUrl:selected.find(media=>media.type==='image')?.url||selected[0]?.thumbnailUrl||fallbackThumbnail(type),sectionIds:chosen});
+  const item=emptyItem({type, title,description,sourceUrl:firstPage.url,media:savedMedia.map((entry,position)=>({type:entry.type,sourceUrl:entry.url,providerUrl:entry.providerUrl||'',playbackUrl:entry.playbackUrl||'',embedUrl:entry.embedUrl||'',thumbnailUrl:entry.thumbnailUrl||'',alt:entry.alt||'',width:entry.width,height:entry.height,hidden:entry.hidden,position:entry.position??position,pageIndex:entry.pageIndex})),thumbnailUrl:selected.find(media=>media.type==='image')?.url||selected[0]?.thumbnailUrl||fallbackThumbnail(type),sectionIds:chosen});
   item.canonicalUrl=firstPage.canonicalUrl;item.sourceUrls=state.pages.map(page=>page.url);  item.sourcePages=state.pages.map((page,index)=>({url:page.url,canonicalUrl:page.canonicalUrl,title:page.title,description:page.description,index,extracted:page.extracted,refetchOnOpen:videoCollectionTitle(page.url)?false:page.refetchOnOpen===true,playlistPaging:page.playlistPaging===true,playlistStart:page.playlistStart||1,playlistHasMore:page.playlistHasMore===true,playlistHasMoreByStart:page.playlistHasMoreByStart||{[page.playlistStart||1]:page.playlistHasMore===true},mediaWarning:page.mediaWarning||'',previewWarning:page.previewWarning||'',truncated:!!page.truncated,media:savedMedia.filter(media=>media.pageIndex===index).map(({url,...media},position)=>({...media,sourceUrl:url,position:media.position??position,pageIndex:index}))}));item.hiddenMediaUrls=hiddenMediaUrls;
   await storeItem(item);
   await refreshLibrary();V.preview=null;hide();render();toast(`Saved ${state.pages.length} URL(s) and ${selected.length} media item(s).`);
@@ -266,14 +275,15 @@ function defaultThumbnail(item){
  const video=media.find(entry=>entry.type==='video');
  return video?.thumbnailUrl||video?.storedDataUrl||fallbackThumbnail(item.type);
 }
-function downloadUrl(media){return media.downloadUrl||(!media.embedUrl?(media.playbackUrl||media.sourceUrl):'')}
+function downloadUrl(media){return media.downloadUrl||(!media.providerUrl&&!media.embedUrl?(media.playbackUrl||media.sourceUrl):'')}
 function downloadButton(item,media,label='Download',className='b media-download-button',role=''){
  const url=downloadUrl(media);
  const target=url?`data-download-url="${esc(url)}"`:media.storedDataUrl?`data-download-local="${esc(media.id)}"`:'';
  const roleAttribute=role?` role="${role}"`:'';
- return target?`<button class="${className}"${roleAttribute} ${target} data-download-title="${esc(item.title)}" data-download-type="${esc(media.type)}" data-download-thumb="${esc(media.thumbnailUrl||'')}" data-download-item="${esc(item.id)}">${label}</button>`:`<button class="${className}"${roleAttribute} disabled title="This provider embed does not expose a downloadable media file.">${label} unavailable</button>`;
+ const providerUrl=media.type==='video'&&(media.providerUrl||media.embedUrl)?`data-download-video="${esc(media.providerUrl||media.sourceUrl||media.url)}"`:'';
+ return target||providerUrl?`<button class="${className}"${roleAttribute} ${providerUrl||target} data-download-title="${esc(item.title)}" data-download-type="${esc(media.type)}" data-download-thumb="${esc(media.thumbnailUrl||'')}" data-download-item="${esc(item.id)}">${label}</button>`:`<button class="${className}"${roleAttribute} disabled title="This provider embed does not expose a downloadable media file.">${label} unavailable</button>`;
 }
-async function downloadMedia(url,{itemId='',title='Media',type='image',thumbnailUrl=''}={}){
+async function downloadMedia(url,{itemId='',title='Media',type='image',thumbnailUrl='',ytDlp=false}={}){
  if(!url){toast('This media has no downloadable source URL.');return}
  try{
   const local=url.startsWith('data:')||url.startsWith('blob:');
@@ -285,32 +295,41 @@ async function downloadMedia(url,{itemId='',title='Media',type='image',thumbnail
    filename=`${title.replace(/[<>:"/\\|?*\u0000-\u001f]/g,'_')||'media'}.${type==='video'?'mp4':'jpg'}`;
    anchor.href=objectUrl;anchor.download=filename;setTimeout(()=>URL.revokeObjectURL(objectUrl),60_000);
   }else{
-   anchor.href=`/api/download?url=${encodeURIComponent(url)}`;
+   anchor.href=ytDlp?videoDownloadUrl(url,title):`/api/download?url=${encodeURIComponent(url)}`;
    anchor.rel='noopener';
-   filename=host(url)||title||'media';
+   if(ytDlp)anchor.target='_blank';
+   filename=ytDlp?title||'video':host(url)||title||'media';
   }
   document.body.append(anchor);anchor.click();anchor.remove();
-  V.downloads.unshift({itemId,url,title,type,thumbnailUrl,filename,downloadedAt:new Date().toISOString()});V.downloads=V.downloads.slice(0,200);storeDownloadHistory();renderNav();toast(`Download started: ${filename}`);
+  V.downloads.unshift({itemId,url,title,type,thumbnailUrl,filename,ytDlp,downloadedAt:new Date().toISOString()});V.downloads=V.downloads.slice(0,200);storeDownloadHistory();renderNav();toast(`Download started: ${filename}`);
  }catch(error){console.error('Media download failed:',error);toast(error.message||'Could not download this media.')}
 }
 function renderDownloadHistory(){
  const records=V.downloads;
  const downloads=V.downloadPreview;
- const content=downloads?downloads.media.length?`<h2 class="download-heading">${esc(downloads.title)} <span>${downloads.media.length} media candidate(s)</span></h2><p class="hint">Candidates with known dimensions are listed highest-resolution first. Providers may restrict access, and Grabit cannot download protected or login-only media.</p>${downloads.warning?`<p class="hint" role="status">${esc(downloads.warning)}</p>`:''}${downloads.truncated?'<p class="hint" role="status">Only the first 500 media items are shown.</p>':''}<div class="download-discovery-grid">${downloads.media.map((media,index)=>`<article class="download-discovery-card"><div class="download-discovery-thumb">${media.type==='video'?`<video src="${esc(media.playbackUrl||media.url)}" poster="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" muted playsinline preload="none"></video>`:`<img src="${esc(media.thumbnailUrl||media.url)}" alt="" loading="lazy" decoding="async">`}</div><div class="download-discovery-copy"><strong>${esc(media.type==='video'?'Video':'Image')} ${index+1}${index===0?' · highest exposed quality':''}</strong><span>${media.width||media.height?`${media.width||'?'} × ${media.height||'?'} px · `:''}${esc(host(media.playbackUrl||media.url))}</span></div>${media.embedUrl?`<p class="hint">This is a provider embed; a downloadable file URL was not exposed.</p>`:`<button class="b p" data-discovery-download="${index}">Download${index===0?' highest listed quality':''}</button>`}</article>`).join('')}</div>`:`<div class="download-empty"><b>No downloadable media was exposed.</b><p>Some social posts provide an embed only, or require sign-in. Grabit does not bypass provider restrictions. Try a public page with directly accessible media.</p></div>`:'';
+ const pageControls=downloads?.playlistPaging?`<div class="row download-page-controls" aria-label="Video list pages"><button class="b" data-download-page="${downloads.start-10}"${downloads.start<=1?' disabled':''}>Previous 10</button><span>Videos ${downloads.start}–${downloads.start+downloads.media.length-1}</span><button class="b" data-download-page="${downloads.start+10}"${downloads.hasMore?'':' disabled'}>Next 10</button></div>`:'';
+ const content=downloads?downloads.media.length?`<h2 class="download-heading">${esc(downloads.title)} <span>${downloads.media.length} media candidate(s)</span></h2>${pageControls}<p class="hint">Candidates with known dimensions are listed highest-resolution first. Providers may restrict access, and Grabit cannot download protected or login-only media.</p>${downloads.warning?`<p class="hint" role="status">${esc(downloads.warning)}</p>`:''}${downloads.truncated?'<p class="hint" role="status">Only the first 500 media items are shown.</p>':''}<div class="download-discovery-grid">${downloads.media.map((media,index)=>`<article class="download-discovery-card"><div class="download-discovery-thumb">${media.type==='video'&&(media.embedUrl&&!media.playbackUrl)?`<img src="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" alt="" loading="lazy" decoding="async">`:`${media.type==='video'?`<video controls src="${esc(media.playbackUrl||media.url)}" poster="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" playsinline preload="none"></video>`:`<img src="${esc(media.thumbnailUrl||media.url)}" alt="" loading="lazy" decoding="async">`}`}</div><div class="download-discovery-copy"><strong>${esc(media.type==='video'?'Video':'Image')} ${index+1}${index===0?' · highest exposed quality':''}</strong><span>${media.width||media.height?`${media.width||'?'} × ${media.height||'?'} px · `:''}${esc(host(media.playbackUrl||media.url))}</span></div>${media.type==='video'&&(media.providerUrl||media.embedUrl)?`${!media.playbackUrl?`<button class="b" data-discovery-play="${index}">Try player</button>`:''}<button class="b p" data-discovery-download="${index}">Download with Grabit</button>`:media.embedUrl?`<p class="hint">This provider embed does not expose a downloadable media file.</p>`:`<button class="b p" data-discovery-download="${index}">Download${index===0?' highest listed quality':''}</button>`}</article>`).join('')}</div>`:`<div class="download-empty"><b>No downloadable media was exposed.</b><p>Some social posts provide an embed only, or require sign-in. Grabit does not bypass provider restrictions. Try a public page with directly accessible media.</p></div>`:'';
  const history=records.length?`<div class="download-history">${records.map((entry,index)=>`<article class="download-record"><img src="${esc(entry.thumbnailUrl||fallbackThumbnail(entry.type||'media'))}" alt="" loading="lazy"><div class="download-record-copy"><strong>${esc(entry.title||entry.filename||'Media download')}</strong><span>${esc(entry.filename||host(entry.url||''))} · ${esc(new Date(entry.downloadedAt).toLocaleString())}</span></div><button class="b" data-download-history="${index}">Download again</button></article>`).join('')}</div>`:'<p class="hint">Downloads started from this tool or saved media will appear here.</p>';
- $('#main').innerHTML=`<section class="download-tool"><h2>Download from a URL</h2><p class="hint">Enter a public webpage, image, or video URL. Grabit will list media URLs exposed by the page and offer direct downloads when the server can access them. Supported XHamster/XHOfficial creator video lists are scanned with yt-dlp, up to 500 videos.</p><form class="download-url-form" id="downloadUrlForm"><input class="in" id="downloadUrlInput" type="url" required maxlength="2048" autocomplete="url" placeholder="https://example.com/gallery" value="${esc(V.downloadUrl)}" aria-label="URL to find downloadable media"><button class="b p" type="submit"${V.downloadError==='loading'?' disabled':''}>${V.downloadError==='loading'?'Finding media…':'Find media'}</button></form>${V.downloadError&&V.downloadError!=='loading'?`<p class="download-error" role="alert">${esc(V.downloadError)}</p>`:''}${content}</section><section class="download-history-section"><div class="download-history-heading"><h2>Download history</h2><button class="b" data-clear-downloads${records.length?'':' disabled'}>Clear history</button></div>${history}</section>`;
+ $('#main').innerHTML=`<section class="download-tool"><h2>Download from a URL</h2><p class="hint">Paste a public webpage or video URL. Grabit checks for exposed media, then tries yt-dlp discovery for public pages supported by its extractors. Sign-in-only, DRM-protected, or provider-blocked videos are not supported.</p><form class="download-url-form" id="downloadUrlForm"><input class="in" id="downloadUrlInput" type="url" required maxlength="2048" autocomplete="url" placeholder="https://example.com/video" value="${esc(V.downloadUrl)}" aria-label="URL to find downloadable media"><button class="b p" type="submit"${V.downloadError==='loading'?' disabled':''}>${V.downloadError==='loading'?'Finding media…':'Find media'}</button></form>${V.downloadError&&V.downloadError!=='loading'?`<p class="download-error" role="alert">${esc(V.downloadError)}</p>`:''}${content}</section><section class="download-history-section"><div class="download-history-heading"><h2>Download history</h2><button class="b" data-clear-downloads${records.length?'':' disabled'}>Clear history</button></div>${history}</section>`;
 }
-async function discoverDownloads(){
- const input=$('#downloadUrlInput'),url=validUrl(input?.value||'');
+async function discoverDownloads(start=1,rawUrl=''){
+ const input=$('#downloadUrlInput'),url=validUrl(rawUrl||V.downloadUrl||input?.value||'');
  if(!url){V.downloadError='Enter a valid public HTTP or HTTPS URL.';renderDownloadHistory();return}
  V.downloadUrl=url.href;V.downloadError='loading';V.downloadPreview=null;renderDownloadHistory();
  try{
   let page;
   const kind=classify(url.href);
   if(kind==='image'||kind==='video')page={title:host(url.href),media:[{type:kind,url:url.href,thumbnailUrl:kind==='image'?url.href:''}]};
-  else page=await previewUrl(url.href);
-  const media=(Array.isArray(page.media)?page.media:[]).filter(entry=>entry&&typeof entry.url==='string').sort((a,b)=>(Number(b.width||0)*Number(b.height||0))-(Number(a.width||0)*Number(a.height||0)));
-  V.downloadPreview={title:page.title||host(url.href),media,truncated:!!page.truncated,warning:page.mediaWarning||page.previewWarning||''};
+   else{
+    try{page=await previewUrl(url.href,start>1?{start}:{})}
+    catch(error){page={title:host(url.href),media:[],previewWarning:error.message||'The page preview failed.'}}
+   }
+  let media=(Array.isArray(page.media)?page.media:[]).filter(entry=>entry&&typeof entry.url==='string').sort((a,b)=>(Number(b.width||0)*Number(b.height||0))-(Number(a.width||0)*Number(a.height||0)));
+  if(!page.playlistPaging&&!media.some(entry=>entry.type==='video'&&(entry.playbackUrl||(!entry.providerUrl&&!entry.embedUrl)))){
+   try{media=[...media.filter(entry=>entry.type!=='video'),await resolveVideoUrl(url.href)]}
+   catch(error){if(media.length)console.warn('yt-dlp could not resolve another video source:',error);else if(page.previewWarning)throw new Error(`${page.previewWarning} ${error.message}`);else throw error}
+  }
+  V.downloadPreview={title:page.title||host(url.href),media,truncated:!!page.truncated,warning:page.mediaWarning||page.previewWarning||'',playlistPaging:page.playlistPaging===true,start:page.start||1,hasMore:page.hasMore===true};
   V.downloadError='';
   renderDownloadHistory();
  }catch(error){
@@ -331,12 +350,12 @@ async function installGrabit(){
  toast(isApple?'To install, use Share, then Add to Home Screen.':'Use your browser menu and choose Install app or Add to Home screen.');
 }
 function embedPage(url,data){
- const page={url,canonicalUrl:data.canonicalUrl||normalized(url),title:data.title||host(url),description:data.description||'',media:Array.isArray(data.media)?data.media:[],refetchOnOpen:data.refetchOnOpen===true,mediaWarning:data.mediaWarning||'',previewWarning:data.previewWarning||'',truncated:!!data.truncated,playlistPaging:videoCollectionTitle(url)!=='',playlistStart:Number.isSafeInteger(data.start)?data.start:1,playlistHasMore:data.hasMore===true};
+ const page={url,canonicalUrl:data.canonicalUrl||normalized(url),title:data.title||host(url),description:data.description||'',media:Array.isArray(data.media)?data.media:[],refetchOnOpen:data.refetchOnOpen===true,mediaWarning:data.mediaWarning||'',previewWarning:data.previewWarning||'',truncated:!!data.truncated,playlistPaging:data.playlistPaging===true||videoCollectionTitle(url)!=='',playlistStart:Number.isSafeInteger(data.start)?data.start:1,playlistHasMore:data.hasMore===true};
  const embed=socialMediaEmbed(url);
- if(embed&&!(embed.type==='video'&&page.media.filter(media=>media.type==='video').length>1)){
+ if(embed&&!page.playlistPaging&&!(embed.type==='video'&&page.media.filter(media=>media.type==='video').length>1)){
   const sourceMedia=page.media.find(media=>media.type===embed.type)||page.media.find(media=>media.type==='image')||page.media.find(media=>media.type==='video');
   const thumbnail=page.media.find(media=>media.type==='image')?.url||page.media.find(media=>media.type==='video')?.thumbnailUrl||fallbackThumbnail(embed.type);
-  const embeddedMedia={type:embed.type,url,sourceUrl:url,embedUrl:embed.url,thumbnailUrl:thumbnail,downloadUrl:sourceMedia?.url||'',alt:page.title};
+  const embeddedMedia={type:embed.type,url,sourceUrl:url,providerUrl:embed.type==='video'?url:'',embedUrl:embed.url,thumbnailUrl:thumbnail,downloadUrl:sourceMedia?.type===embed.type?sourceMedia.url:'',alt:page.title};
   if(embed.type==='video'){
    page.media=[embeddedMedia];
    return page;
@@ -403,11 +422,43 @@ async function loadWatchPage(item){
   if(!pages.length)throw new Error('No valid page URLs are saved for this item.');
   item.sourcePages=pages.map((page,index)=>({...page,index,media:page.media.map((media,position)=>({...media,type:media.type||'image',sourceUrl:media.url||media.sourceUrl||'',position:media.position??position,pageIndex:index,thumbnailUrl:media.thumbnailUrl||''}))}));
   item.media=item.sourcePages.flatMap(page=>page.media);
+  if(item.type==='bookmark'&&item.sourcePages.some(page=>page.playlistPaging))item.type='playlist';
   if(item.type==='bookmark'&&item.media.length===1&&item.media[0].type==='video'&&V.watch?.itemId===item.id)V.watch.mediaIndex=0;
   if(!item.thumbnailUrl||item.thumbnailUrl.startsWith('data:image/svg+xml,')||(item.hiddenMediaUrls||[]).includes(item.thumbnailUrl))item.thumbnailUrl=defaultThumbnail(item);
   item.updatedAt=new Date().toISOString();await storeItem(item);await refreshLibrary();
   if(V.watch?.itemId===item.id){V.watch.loading=false;renderWatchPage(false);if(item.sourcePages.some(page=>page.error))toast('Some URLs could not be previewed; use the URL controls to continue or retry.')}
  }catch(error){console.error('Could not load saved page media:',error);if(V.watch?.itemId===item.id){V.watch.loading=false;V.watch.retrying=true;renderWatchPage(false,`Could not fetch this page's media: ${error.message}`)}}
+}
+async function playVideoInGrabit(item,media,index){
+ const watch=V.watch;if(!watch||watch.itemId!==item.id)return;
+ watch.mediaIndex=index;watch.loading=true;renderWatchPage(false,'Finding a playable video…');
+ try{
+  const resolved=await resolveVideoUrl(media.providerUrl||media.sourceUrl||media.url),embedUrl=media.embedUrl;
+  Object.assign(media,resolved);if(embedUrl)media.embedUrl=embedUrl;
+  watch.loading=false;watch.scrollTop=0;syncWatchUrl();renderWatchPage(true);
+ }catch(error){
+  watch.loading=false;renderWatchPage();toast(`Could not open a native video stream. The provider player may still work: ${error.message}`);
+ }
+}
+async function findAndPlayVideo(item){
+ const watch=V.watch;if(!watch||watch.itemId!==item.id)return;
+ const pages=Array.isArray(item.sourcePages)&&item.sourcePages.length?item.sourcePages:sourcePages(item);
+ item.sourcePages=pages;
+ const page=pages[watch.pageIndex];
+ watch.loading=true;renderWatchPage(false,'Looking for a public playable video…');
+ try{
+  const resolved=await resolveVideoUrl(page.url);
+  const media={...resolved,alt:resolved.alt||page.title||item.title,position:page.media.length,pageIndex:page.index};
+  page.media.push(media);page.extracted=true;page.refetchOnOpen=false;
+  item.sourceUrls=Array.isArray(item.sourceUrls)&&item.sourceUrls.length?item.sourceUrls:[page.url];
+  item.media=pages.flatMap(source=>source.media);
+  const savedPages=pages.map(source=>({...source,media:source.media.map(({playbackUrl,...entry})=>entry)}));
+  try{await storeItem({...item,sourcePages:savedPages,media:savedPages.flatMap(source=>source.media)})}
+  catch(error){reportError('Could not save the discovered video',error)}
+  watch.mediaIndex=watchPageMedia(item,page).length-1;watch.loading=false;syncWatchUrl();renderWatchPage();
+ }catch(error){
+  watch.loading=false;renderWatchPage();toast(`No playable public video was found: ${error.message}`);
+ }
 }
 async function loadPlaylistBatch(item,page,start){
  const watch=V.watch;if(!watch||watch.loading)return;
@@ -462,7 +513,7 @@ async function changePlaylistBatch(item,page,start){
 function watchMediaTile(item,media,index){
  const hidden=(item.hiddenMediaUrls||[]).includes(media.sourceUrl);
  const poster=media.thumbnailUrl|| (media.type==='image'?media.sourceUrl:fallbackThumbnail('video'));
- const visual=hidden?`<span class="hidden-media-placeholder" aria-hidden="true">${media.type==='video'?'Hidden video':'Hidden image'}</span>`:media.embedUrl?`<img src="${esc(poster)}" alt="" loading="lazy"><span class="play-mark" aria-hidden="true">${media.type==='video'?'▶':'↗'}</span>`:media.type==='video'?`<video src="${esc(mediaSource(media))}" poster="${esc(poster)}" muted playsinline preload="none" tabindex="-1"></video><span class="play-mark" aria-hidden="true">▶</span>`:`<img src="${esc(mediaSource(media))}" alt="${esc(media.alt||item.title)}" loading="lazy" decoding="async">`;
+ const visual=hidden?`<span class="hidden-media-placeholder" aria-hidden="true">${media.type==='video'?'Hidden video':'Hidden image'}</span>`:media.embedUrl&&!media.playbackUrl?`<img src="${esc(poster)}" alt="" loading="lazy"><span class="play-mark" aria-hidden="true">${media.type==='video'?'▶':'↗'}</span>`:media.type==='video'?`<video src="${esc(mediaSource(media))}" poster="${esc(poster)}" muted playsinline preload="none" tabindex="-1"></video><span class="play-mark" aria-hidden="true">▶</span>`:`<img src="${esc(mediaSource(media))}" alt="${esc(media.alt||item.title)}" loading="lazy" decoding="async">`;
  const ratio=media.width&&media.height?Number(media.height)/Number(media.width):media.type==='video'?0.75:1;
  return`<div class="watch-tile-wrap${hidden?' hidden-media':''}" data-ratio="${Number.isFinite(ratio)&&ratio>0?ratio:1}"><button class="watch-tile" data-watch-media="${index}" aria-label="${hidden?`Hidden ${media.type} ${index+1}`:`Open ${media.type} ${index+1}`}"${hidden?' disabled':''}>${visual}</button><button class="watch-actions-toggle" data-watch-menu aria-label="Show media actions" aria-haspopup="menu" aria-expanded="false">${icon(icons.more)}</button><div class="watch-actions-menu" role="menu"><button class="watch-hide-button" role="menuitem" data-watch-hide="${esc(media.sourceUrl)}">${icon(icons.hide)}<span>${hidden?`Unhide ${media.type}`:`Hide ${media.type}`}</span></button>${hidden?'':downloadButton(item,media,`${icon(icons.download)}<span>Download</span>`,'watch-download-button media-download-button','menuitem')}</div></div>`;
 }
@@ -504,14 +555,15 @@ function renderWatchPage(pushScroll=false,message=''){
  const navigation=`<header class="watch-header"><button class="b watch-back-button" data-watch-action="${backAction}" aria-label="Back to ${backTarget}"><svg class="watch-back-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg><span>${active&&hasGallery?'Gallery':'Library'}</span></button><div class="watch-heading"><strong>${esc(item.title)}</strong><span>${pages.length>1?`URL ${watch.pageIndex+1} of ${pages.length} · `:''}${esc(pageTitle)}</span></div>${controls}</header>`;
  let content='';
  if(message)content=`<div class="watch-message">${esc(message)}${item.sourceUrl?`<p><a href="${esc(item.sourceUrl)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p>`:''}<button class="b" data-watch-action="retry">Retry</button></div>`;
- else if(active&&!shouldShowGallery)content=`<div class="watch-stage" data-swipe><button class="b watch-arrow previous" data-watch-action="previousMedia" aria-label="Previous photo"${watch.mediaIndex===0?' disabled':''}>‹</button><div class="watch-stage-content">${activeHidden?`<span class="hidden-media-placeholder">${active.type==='video'?'Hidden video':'Hidden image'}</span>`:active.embedUrl?`<iframe src="${esc(active.embedUrl)}" title="${esc(active.alt||pageTitle)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`:active.type==='video'?`<video controls autoplay playsinline preload="metadata" poster="${esc(active.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(active))}">Video playback is unavailable in this browser.</video>`:`<img class="watch-active-image${watch.mediaDirection==='next'?' slide-from-right':watch.mediaDirection==='previous'?' slide-from-left':''}" src="${esc(mediaSource(active))}" alt="${esc(active.alt||pageTitle)}">`}</div><button class="b watch-arrow next" data-watch-action="nextMedia" aria-label="Next photo"${watch.mediaIndex===media.length-1?' disabled':''}>›</button></div><div class="watch-stage-caption"><span>${watch.mediaIndex+1} / ${media.length}</span>${activeHidden?`<button class="b" data-watch-hide="${esc(active.sourceUrl)}">Unhide ${active.type}</button>`:active.type==='image'?'':`${downloadButton(item,active)}<button class="b" data-watch-hide="${esc(active.sourceUrl)}">Hide ${active.type}</button>`}</div>`;
- else if(page.error&&!media.length)content=`<div class="watch-message">Could not load this URL: ${esc(page.error)}<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p><button class="b" data-watch-action="retry">Retry</button></div>`;
- else if(media.length)content=`<div class="watch-page-info"><span>${esc(pageTitle)} · ${watch.showingHidden?`${hiddenMedia.length} hidden items`:`${feedMedia.length} items`}</span>${page.url?`<a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original</a>`:''}${hiddenMedia.length||watch.showingHidden?`<button class="watch-hidden-toggle" data-watch-action="${watch.showingHidden?'showGalleryFeed':'showHiddenMedia'}">${watch.showingHidden?'Back to gallery':`Hidden items (${hiddenMedia.length})`}</button>`:''}</div>${item.type==='playlist'?'':[page.mediaWarning,page.previewWarning,page.truncated?'Only the first 500 media items are shown.':''].filter(Boolean).map(warning=>`<p class="hint" role="status">${esc(warning)}</p>`).join('')}${displayedMedia.length?`<div class="watch-grid">${displayedMedia.map(({entry,index})=>watchMediaTile(item,entry,index)).join('')}</div>`:`<div class="watch-message">${watch.showingHidden?'There are no hidden media on this URL.':'No visible media. Open Hidden items to manage hidden media.'}</div>`}`;
- else content=`<div class="watch-message">${esc(message||'No images or videos were found on this page.')}${page.url?`<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p>`:''}</div>`;
+ else if(active&&!shouldShowGallery)content=`<div class="watch-stage" data-swipe><button class="b watch-arrow previous" data-watch-action="previousMedia" aria-label="Previous photo"${watch.mediaIndex===0?' disabled':''}>‹</button><div class="watch-stage-content">${activeHidden?`<span class="hidden-media-placeholder">${active.type==='video'?'Hidden video':'Hidden image'}</span>`:active.type==='video'&&active.playbackUrl?`<video data-watch-playback controls autoplay playsinline preload="metadata" poster="${esc(active.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(active))}">Video playback is unavailable in this browser.</video>`:active.embedUrl?`<iframe src="${esc(active.embedUrl)}" title="${esc(active.alt||pageTitle)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`:active.type==='video'?`<video controls autoplay playsinline preload="metadata" poster="${esc(active.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(active))}">Video playback is unavailable in this browser.</video>`:`<img class="watch-active-image${watch.mediaDirection==='next'?' slide-from-right':watch.mediaDirection==='previous'?' slide-from-left':''}" src="${esc(mediaSource(active))}" alt="${esc(active.alt||pageTitle)}">`}</div><button class="b watch-arrow next" data-watch-action="nextMedia" aria-label="Next photo"${watch.mediaIndex===media.length-1?' disabled':''}>›</button></div><div class="watch-stage-caption"><span>${watch.mediaIndex+1} / ${media.length}</span>${activeHidden?`<button class="b" data-watch-hide="${esc(active.sourceUrl)}">Unhide ${active.type}</button>`:active.type==='image'?'':`${downloadButton(item,active)}${active.type==='video'&&(active.providerUrl||active.embedUrl)?`<button class="b" data-watch-action="resolveVideo">Try native player</button>`:''}<button class="b" data-watch-hide="${esc(active.sourceUrl)}">Hide ${active.type}</button>`}</div>`;
+ else if(page.error&&!media.length)content=`<div class="watch-message">Could not load this URL: ${esc(page.error)}<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p><button class="b p" data-watch-action="resolveSourceVideo">Find and play video</button><button class="b" data-watch-action="retry">Retry</button></div>`;
+ else if(media.length)content=`<div class="watch-page-info"><span>${esc(pageTitle)} · ${watch.showingHidden?`${hiddenMedia.length} hidden items`:`${feedMedia.length} items`}</span>${page.url?`<a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original</a>`:''}${!media.some(entry=>entry.type==='video')&&page.url?'<button class="b" data-watch-action="resolveSourceVideo">Find videos</button>':''}${hiddenMedia.length||watch.showingHidden?`<button class="watch-hidden-toggle" data-watch-action="${watch.showingHidden?'showGalleryFeed':'showHiddenMedia'}">${watch.showingHidden?'Back to gallery':`Hidden items (${hiddenMedia.length})`}</button>`:''}</div>${item.type==='playlist'?'':[page.mediaWarning,page.previewWarning,page.truncated?'Only the first 500 media items are shown.':''].filter(Boolean).map(warning=>`<p class="hint" role="status">${esc(warning)}</p>`).join('')}${displayedMedia.length?`<div class="watch-grid">${displayedMedia.map(({entry,index})=>watchMediaTile(item,entry,index)).join('')}</div>`:`<div class="watch-message">${watch.showingHidden?'There are no hidden media on this URL.':'No visible media. Open Hidden items to manage hidden media.'}</div>`}`;
+ else content=`<div class="watch-message">${esc(message||'No images or videos were found on this page.')}${page.url?`<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p><button class="b p" data-watch-action="resolveSourceVideo">Find and play video</button>`:''}</div>`;
  delete watch.mediaDirection;
  V.watchResizeObserver?.disconnect();V.watchResizeObserver=null;
  const viewerBackdrop=active?.type==='image'&&!activeHidden?`<img class="watch-viewer-backdrop" src="${esc(mediaSource(active))}" alt="" aria-hidden="true">`:'';
  main.innerHTML=`${viewerBackdrop}${navigation}<div class="watch-content${active?' focused-media-view':''}">${content}</div>`;
+ main.querySelectorAll('iframe, video').forEach(player=>{player.referrerPolicy='strict-origin-when-cross-origin'});
  const pageInfo=main.querySelector('.watch-page-info > span');
  if(page.playlistPaging&&pageInfo)pageInfo.textContent=`${pageTitle} · Videos ${page.playlistStart}–${page.playlistStart+media.length-1} · ${watch.showingHidden?`${hiddenMedia.length} hidden items`:`${feedMedia.length} items`}`;
  const watchHeader=main.querySelector('.watch-header');
@@ -840,11 +892,23 @@ $('#md').addEventListener('input',e=>{
  if(e.target.id==='urls'&&V.preview){V.preview=null;$('#extractionPreview').innerHTML='';const saveButton=$('#saveImportButton');if(saveButton)saveButton.textContent='Save URL(s)'}
 });
 $('#main').addEventListener('click',async e=>{
+ const downloadPage=e.target.closest('[data-download-page]');
+ if(downloadPage){await discoverDownloads(Number(downloadPage.dataset.downloadPage));return}
  const actionToggle=e.target.closest('[data-watch-menu]');
  if(actionToggle){const tile=actionToggle.closest('.watch-tile-wrap'),menu=tile.querySelector('.watch-actions-menu'),open=!tile.classList.contains('show-actions');document.querySelectorAll('.watch-tile-wrap.show-actions').forEach(item=>{item.classList.remove('show-actions');item.querySelector('.watch-actions-menu')?.classList.remove('align-left');item.querySelector('[data-watch-menu]')?.setAttribute('aria-expanded','false')});tile.classList.toggle('show-actions',open);if(open)menu.classList.toggle('align-left',tile.getBoundingClientRect().left<innerWidth/2);actionToggle.setAttribute('aria-expanded',String(open));return}
  if(!e.target.closest('.watch-tile-wrap.show-actions'))document.querySelectorAll('.watch-tile-wrap.show-actions').forEach(item=>{item.classList.remove('show-actions');item.querySelector('.watch-actions-menu')?.classList.remove('align-left');item.querySelector('[data-watch-menu]')?.setAttribute('aria-expanded','false')});
  const discovered=e.target.closest('[data-discovery-download]');
- if(discovered){const media=V.downloadPreview?.media[Number(discovered.dataset.discoveryDownload)];if(media&&!media.embedUrl)await downloadMedia(media.playbackUrl||media.url,{title:V.downloadPreview.title,type:media.type,thumbnailUrl:media.thumbnailUrl||''});return}
+ if(discovered){const media=V.downloadPreview?.media[Number(discovered.dataset.discoveryDownload)];if(media)await downloadMedia(media.providerUrl||media.embedUrl||media.playbackUrl||media.url,{title:media.alt||V.downloadPreview.title,type:media.type,thumbnailUrl:media.thumbnailUrl||'',ytDlp:media.type==='video'&&!!(media.providerUrl||media.embedUrl)});return}
+ const discoveryPlay=e.target.closest('[data-discovery-play]');
+ if(discoveryPlay){
+  const media=V.downloadPreview?.media[Number(discoveryPlay.dataset.discoveryPlay)];
+  if(media)try{
+   const resolved=await resolveVideoUrl(media.providerUrl||media.embedUrl||media.url),embedUrl=media.embedUrl;
+   Object.assign(media,resolved);if(embedUrl)media.embedUrl=embedUrl;
+   renderDownloadHistory();
+  }catch(error){V.downloadError=error.message||'Could not find a playable video.';renderDownloadHistory()}
+  return;
+ }
  const downloadButton=e.target.closest('[data-download-url],[data-download-local]');
  if(downloadButton){
   const actionMenu=downloadButton.closest('.watch-actions-menu');
@@ -852,8 +916,10 @@ $('#main').addEventListener('click',async e=>{
   const local=downloadButton.dataset.downloadLocal?V.items.find(item=>item.id===downloadButton.dataset.downloadItem)?.media.find(media=>media.id===downloadButton.dataset.downloadLocal)?.storedDataUrl:'';
   await downloadMedia(downloadButton.dataset.downloadUrl||local,{itemId:downloadButton.dataset.downloadItem,title:downloadButton.dataset.downloadTitle,type:downloadButton.dataset.downloadType,thumbnailUrl:downloadButton.dataset.downloadThumb});return;
  }
+ const videoDownload=e.target.closest('[data-download-video]');
+ if(videoDownload){await downloadMedia(videoDownload.dataset.downloadVideo,{itemId:videoDownload.dataset.downloadItem,title:videoDownload.dataset.downloadTitle,type:'video',thumbnailUrl:videoDownload.dataset.downloadThumb,ytDlp:true});return}
  const downloadHistory=e.target.closest('[data-download-history]');
- if(downloadHistory){const record=V.downloads[Number(downloadHistory.dataset.downloadHistory)];if(record)await downloadMedia(record.url,{itemId:record.itemId,title:record.title,type:record.type,thumbnailUrl:record.thumbnailUrl});return}
+ if(downloadHistory){const record=V.downloads[Number(downloadHistory.dataset.downloadHistory)];if(record)await downloadMedia(record.url,{itemId:record.itemId,title:record.title,type:record.type,thumbnailUrl:record.thumbnailUrl,ytDlp:record.ytDlp===true});return}
  if(e.target.closest('[data-clear-downloads]')){V.downloads=[];storeDownloadHistory();render();return}
  const watchButton=e.target.closest('[data-watch-action]');
  if(watchButton&&V.watch&&['previousPlaylistBatch','nextPlaylistBatch'].includes(watchButton.dataset.watchAction)){
@@ -864,10 +930,18 @@ $('#main').addEventListener('click',async e=>{
   }
   return;
  }
- if(watchButton&&V.watch){const action=watchButton.dataset.watchAction,item=V.items.find(entry=>entry.id===V.watch.itemId);if(action==='back'){V.watch=null;syncWatchUrl();$('#win').classList.remove('watch-mode');$('#main').classList.remove('full-viewer','focused-view');render();return}if(action==='edit'&&item){editItem(item.id);return}if(action==='retry'&&item){item.sourcePages=null;item.media=[];V.watch.loading=false;V.watch.retrying=false;V.watch.extractionAttempted=false;loadWatchPage(item);return}if(action==='showHiddenMedia'||action==='showGalleryFeed'){V.watch.showingHidden=action==='showHiddenMedia';V.watch.mediaIndex=-1;renderWatchPage();return}if(action==='previousPage'||action==='nextPage'){const count=sourcePages(item).length;V.watch.pageIndex=Math.max(0,Math.min(count-1,V.watch.pageIndex+(action==='previousPage'?-1:1)));V.watch.mediaIndex=-1;V.watch.showingHidden=false;V.watch.scrollTop=0;syncWatchUrl();renderWatchPage(true);return}if(action==='previousMedia'||action==='nextMedia'){const page=sourcePages(item)[V.watch.pageIndex],media=watchPageMedia(item,page);V.watch.mediaIndex=Math.max(0,Math.min(media.length-1,V.watch.mediaIndex+(action==='previousMedia'?-1:1)));V.watch.mediaDirection=action==='nextMedia'?'next':'previous';syncWatchUrl();renderWatchPage();return}if(action==='showGrid'){V.watch.mediaIndex=-1;delete V.watch.mediaDirection;syncWatchUrl();renderWatchPage();return}}
+ if(watchButton?.dataset.watchAction==='resolveSourceVideo'&&V.watch){const item=V.items.find(entry=>entry.id===V.watch.itemId);if(item)await findAndPlayVideo(item);return}
+ if(watchButton&&V.watch){const action=watchButton.dataset.watchAction,item=V.items.find(entry=>entry.id===V.watch.itemId);if(action==='back'){V.watch=null;syncWatchUrl();$('#win').classList.remove('watch-mode');$('#main').classList.remove('full-viewer','focused-view');render();return}if(action==='edit'&&item){editItem(item.id);return}if(action==='retry'&&item){item.sourcePages=null;item.media=[];V.watch.loading=false;V.watch.retrying=false;V.watch.extractionAttempted=false;loadWatchPage(item);return}if(action==='resolveVideo'&&item){const page=sourcePages(item)[V.watch.pageIndex],media=watchPageMedia(item,page)[V.watch.mediaIndex];if(media)await playVideoInGrabit(item,media,V.watch.mediaIndex);return}if(action==='showHiddenMedia'||action==='showGalleryFeed'){V.watch.showingHidden=action==='showHiddenMedia';V.watch.mediaIndex=-1;renderWatchPage();return}if(action==='previousPage'||action==='nextPage'){const count=sourcePages(item).length;V.watch.pageIndex=Math.max(0,Math.min(count-1,V.watch.pageIndex+(action==='previousPage'?-1:1)));V.watch.mediaIndex=-1;V.watch.showingHidden=false;V.watch.scrollTop=0;syncWatchUrl();renderWatchPage(true);return}if(action==='previousMedia'||action==='nextMedia'){const page=sourcePages(item)[V.watch.pageIndex],media=watchPageMedia(item,page);V.watch.mediaIndex=Math.max(0,Math.min(media.length-1,V.watch.mediaIndex+(action==='previousMedia'?-1:1)));V.watch.mediaDirection=action==='nextMedia'?'next':'previous';syncWatchUrl();renderWatchPage();return}if(action==='showGrid'){V.watch.mediaIndex=-1;delete V.watch.mediaDirection;syncWatchUrl();renderWatchPage();return}}
  const watchHide=e.target.closest('[data-watch-hide]');if(watchHide&&V.watch){await toggleMediaVisibility(V.watch.itemId,watchHide.dataset.watchHide);return}
  const watchMediaButton=e.target.closest('[data-watch-media]');
- if(watchMediaButton&&V.watch){V.watch.mediaIndex=Number(watchMediaButton.dataset.watchMedia);V.watch.scrollTop=$('#main').scrollTop;syncWatchUrl();renderWatchPage();return}
+ if(watchMediaButton&&V.watch){
+  const index=Number(watchMediaButton.dataset.watchMedia),item=V.items.find(entry=>entry.id===V.watch.itemId),page=sourcePages(item)[V.watch.pageIndex],media=watchPageMedia(item,page)[index];
+  if(media?.type==='video'&&(media.providerUrl||media.embedUrl)&&!media.playbackUrl){
+   await playVideoInGrabit(item,media,index);
+   return;
+  }
+  V.watch.mediaIndex=index;V.watch.scrollTop=$('#main').scrollTop;syncWatchUrl();renderWatchPage();return
+ }
  const menuButton=e.target.closest('[data-card-menu]');if(menuButton){e.stopPropagation();const cardEl=menuButton.closest('.card'),menu=cardEl.querySelector('.card-menu'),open=!menu.classList.contains('open');closeCardMenus();if(open){menu.classList.add('open');cardEl.classList.add('menu-open');menuButton.setAttribute('aria-expanded','true');positionCardMenu(menu,menuButton)}return}
  const cardAction=e.target.closest('[data-card-action]');if(cardAction){e.stopPropagation();const id=cardAction.dataset.id,action=cardAction.dataset.cardAction,item=V.items.find(entry=>entry.id===id);if(!item)return;
   const menu=cardAction.closest('.card-menu');if(menu)closeCardMenus();
@@ -883,7 +957,7 @@ $('#main').addEventListener('click',async e=>{
  if(e.target.closest('.card-menu'))return;
  const cardEl=e.target.closest('.card');if(cardEl){if(V.selectMode){V.selected.has(cardEl.dataset.id)?V.selected.delete(cardEl.dataset.id):V.selected.add(cardEl.dataset.id);render()}else{V.mediaIndex=0;detail(cardEl.dataset.id)}}
 });
-$('#main').addEventListener('submit',event=>{if(event.target.id==='downloadUrlForm'){event.preventDefault();discoverDownloads()}});
+$('#main').addEventListener('submit',event=>{if(event.target.id==='downloadUrlForm'){event.preventDefault();discoverDownloads(1,$('#downloadUrlInput')?.value||'')}});
 $('#main').addEventListener('scroll',()=>{
  document.querySelectorAll('.card-menu.open').forEach(menu=>{menu.classList.remove('open');menu.style.removeProperty('--menu-left');menu.style.removeProperty('--menu-top');menu.closest('.card')?.classList.remove('menu-open');menu.previousElementSibling?.setAttribute('aria-expanded','false')});
  if(!V.watch)return;

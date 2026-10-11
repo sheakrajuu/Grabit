@@ -1,12 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
+import net from 'node:net';
 import {Readable} from 'node:stream';
 import {brotliCompressSync,deflateSync,gzipSync} from 'node:zlib';
 import {parsePage,bestSrcsetCandidate,resolvePublicAddress,createPinnedLookup,decompress,safeDownloadFilename,downloadPublicMedia,openPublicMedia,extractorLimits} from '../server/extractor.js';
-import {isVideoCollectionUrl,parseYtDlpOutput,parseYtDlpPlaylist,ytDlpTargetUrl} from '../server/playlist.js';
+import {isVideoCollectionUrl,parseResolvedVideo,parseYtDlpOutput,parseYtDlpPlaylist,ytDlpTargetUrl} from '../server/playlist.js';
+import {createPublicProxy} from '../server/public-proxy.js';
 import {videoEmbedUrl,socialMediaEmbed,videoCollectionTitle} from '../js/utils.js';
 
-test('recognizes supported public creator video-list URLs only',()=>{
+test('recognizes XHamster and XHOfficial creator-list URL normalization targets',()=>{
  assert.equal(isVideoCollectionUrl('https://xhofficial.com/users/angelofbogota/videos'),true);
  assert.equal(isVideoCollectionUrl('https://www.xhamster.com/users/creator/videos/'),true);
  assert.equal(isVideoCollectionUrl('https://example.com/users/creator/videos'),false);
@@ -31,6 +34,7 @@ test('parses yt-dlp video results as playable media and safe embeds',()=>{
   type:'video',
   url:'https://xhamster.com/videos/first',
   sourceUrl:'https://xhamster.com/videos/first',
+  providerUrl:'https://xhamster.com/videos/first',
   playbackUrl:'https://cdn.example/first.mp4',
   thumbnailUrl:'https://cdn.example/first.jpg',
   alt:'First video'
@@ -39,6 +43,7 @@ test('parses yt-dlp video results as playable media and safe embeds',()=>{
   type:'video',
   url:'https://xhamster.com/videos/second',
   sourceUrl:'https://xhamster.com/videos/second',
+  providerUrl:'https://xhamster.com/videos/second',
   embedUrl:'https://xhamster.com/videos/second',
   thumbnailUrl:'https://cdn.example/second.jpg',
   alt:'Second video'
@@ -48,10 +53,31 @@ test('parses yt-dlp video results as playable media and safe embeds',()=>{
   type:'video',
   url:'https://xhamster.com/videos/flat-entry',
   sourceUrl:'https://xhamster.com/videos/flat-entry',
+  providerUrl:'https://xhamster.com/videos/flat-entry',
   embedUrl:'https://xhamster.com/videos/flat-entry',
   thumbnailUrl:'https://cdn.example/flat-entry.jpg',
   alt:'Flat playlist entry'
  });
+});
+
+test('parses public browser-playable streams from yt-dlp metadata',()=>{
+  const media=parseResolvedVideo(JSON.stringify({
+   title:'A public video',webpage_url:'https://video.example/watch/1',
+   url:'https://cdn.example/video.mp4',ext:'mp4',format_id:'18',
+   thumbnail:'https://cdn.example/video.jpg'
+  }),'https://video.example/watch/1');
+  assert.deepEqual(media,{
+   type:'video',
+   url:'https://video.example/watch/1',
+   sourceUrl:'https://video.example/watch/1',
+   providerUrl:'https://video.example/watch/1',
+   playbackUrl:'https://cdn.example/video.mp4',
+   thumbnailUrl:'https://cdn.example/video.jpg',
+   alt:'A public video',
+   extension:'mp4',
+   formatId:'18'
+  });
+  assert.throws(()=>parseResolvedVideo('{"url":"file:///private/video"}','https://video.example/watch/1'),/browser-playable/);
 });
 
 test('treats unavailable flat-playlist titles as empty for metadata enrichment',()=>{
@@ -157,7 +183,7 @@ test('preserves video media when a page approaches the extraction limit',()=>{
 });
 
 test('rejects private, loopback, and mapped private IP addresses',async()=>{
- for(const address of ['127.0.0.1','10.0.0.1','169.254.1.2','192.168.1.1','::1','::ffff:127.0.0.1']){
+ for(const address of ['127.0.0.1','10.0.0.1','169.254.1.2','192.168.1.1','::1','::ffff:127.0.0.1','64:ff9b::7f00:1','2002:7f00:1::1','2001:0:7f00:1::1']){
   assert.equal(await resolvePublicAddress(address),null,address);
  }
 });
@@ -167,6 +193,8 @@ test('rejects hexadecimal IPv4-mapped IPv6 addresses that point to private netwo
   assert.equal(await resolvePublicAddress(address),null,address);
  }
  assert.deepEqual(await resolvePublicAddress('::ffff:808:808'),{address:'::ffff:808:808',family:6});
+ assert.deepEqual(await resolvePublicAddress('2001:4860:4860::8888'),{address:'2001:4860:4860::8888',family:6});
+ assert.deepEqual(await resolvePublicAddress('[2001:4860:4860::8888]'),{address:'2001:4860:4860::8888',family:6});
 });
 
 test('rejects hostnames with any private DNS answer',async()=>{
@@ -195,6 +223,26 @@ test('returns pinned addresses in both Node DNS lookup callback formats',()=>{
   assert.equal(address,expected.address);
   assert.equal(family,expected.family);
  });
+});
+
+test('yt-dlp proxy blocks private HTTP destinations and CONNECT tunnels',async()=>{
+ const proxy=await createPublicProxy();
+ const {port}=new URL(proxy.url);
+ try{
+  const response=await new Promise((resolve,reject)=>{
+   const request=http.get({host:'127.0.0.1',port:Number(port),path:'http://127.0.0.1:3000/private',headers:{host:'127.0.0.1:3000'}},resolve);
+   request.on('error',reject);
+  });
+  assert.equal(response.statusCode,403);
+  response.resume();
+  const tunnel=await new Promise((resolve,reject)=>{
+   const socket=net.connect(Number(port),'127.0.0.1',()=>socket.write('CONNECT 127.0.0.1:443 HTTP/1.1\r\nHost: 127.0.0.1:443\r\n\r\n'));
+   let result='';
+   socket.on('data',chunk=>{result+=chunk.toString();socket.destroy();resolve(result)});
+   socket.on('error',reject);
+  });
+  assert.match(tunnel,/HTTP\/1\.1 403 Forbidden/);
+ }finally{proxy.close()}
 });
 
 test('decompresses gzip, deflate, and Brotli webpage responses',async()=>{

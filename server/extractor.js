@@ -25,16 +25,19 @@ function isPrivateAddress(address){
   const leftGroups=left?left.split(':'):[];
   const rightGroups=right?right.split(':'):[];
   const groups=[...leftGroups,...Array(8-leftGroups.length-rightGroups.length).fill('0'),...rightGroups].map(part=>Number.parseInt(part,16));
+  if(groups.length!==8||groups.some(part=>!Number.isInteger(part)||part<0||part>0xffff))return true;
   if(groups.length===8&&groups.slice(0,5).every(part=>part===0)&&groups[5]===0xffff){
    const ipv4=[groups[6]>>8,groups[6]&255,groups[7]>>8,groups[7]&255].join('.');
    return isPrivateAddress(ipv4);
   }
+  if(groups[0]<0x2000||groups[0]>=0x4000||groups[0]===0x2002||(groups[0]===0x2001&&groups[1]===0))return true;
   return false;
  }
  return true;
 }
 
 export async function resolvePublicAddress(hostname,lookup=dns.lookup){
+ if(hostname.startsWith('[')&&hostname.endsWith(']'))hostname=hostname.slice(1,-1);
  if(net.isIP(hostname))return isPrivateAddress(hostname)?null:{address:hostname,family:net.isIP(hostname)};
  let addresses;
  try{addresses=await lookup(hostname,{all:true,verbatim:true})}catch{return null}
