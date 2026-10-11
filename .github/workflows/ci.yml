@@ -1,0 +1,42 @@
+name: Grabit checks
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '*/7 * * * *'
+  workflow_dispatch:
+    inputs:
+      health_url:
+        description: Optional deployed Grabit base URL for a health check
+        required: false
+        type: string
+
+jobs:
+  tests:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+
+  scheduled-health:
+    if: github.event_name == 'schedule' && vars.GRABIT_HEALTH_URL != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep the configured Grabit endpoint active
+        env:
+          HEALTH_URL: ${{ vars.GRABIT_HEALTH_URL }}
+        run: curl --fail --show-error --silent --retry 2 --retry-delay 10 --retry-all-errors --max-time 120 "${HEALTH_URL%/}/api/health"
+
+  deployed-health:
+    if: github.event_name == 'workflow_dispatch' && (inputs.health_url != '' || vars.GRABIT_HEALTH_URL != '')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check deployed Grabit health endpoint
+        env:
+          HEALTH_URL: ${{ inputs.health_url || vars.GRABIT_HEALTH_URL }}
+        run: curl --fail --show-error --silent --max-time 20 "${HEALTH_URL%/}/api/health"
