@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Grabit">
+<title>Grabit — your visual library</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="./icons/grabit.svg">
+<link rel="apple-touch-icon" sizes="192x192" href="./icons/grabit-192.png">
+<meta name="description" content="Save, organize, and view your images, videos, and bookmarks.">
+<link rel="stylesheet" href="./css/styles.css?v=27">
+</head>
+<body>
+<div class="win" id="win">
+ <aside class="side"><div class="brand">Grabit</div><div id="nav"></div></aside>
+ <div class="scrim" id="scrim"></div>
+ <div class="mw">
+  <div class="top">
+   <button class="ib" id="sbt" title="Toggle sidebar" aria-label="Toggle sidebar">☰</button>
+   <h1 id="ttl">All content</h1>
+   <button class="ib" id="themeToggle" title="Switch theme" aria-label="Switch theme">☼</button>
+   <button class="ib" id="add" title="Add content">+ Add</button>
+   <input class="in" id="q" placeholder="Search..." autocomplete="off" aria-label="Search your library">
+  </div>
+  <div id="main" aria-live="polite"></div>
+ </div>
+</div>
+<div class="md" id="md" role="presentation"><div class="box" id="bx" role="dialog" aria-modal="true" aria-label="Library dialog"></div></div>
+<div id="ts" role="status" aria-live="polite"></div>
+<script type="module" src="./js/app.js?v=27"></script>
+</body>
+</html>
