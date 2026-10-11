@@ -126,7 +126,7 @@ function importDialog(){
  <label for="importDescription">Description (optional)</label><textarea class="in" id="importDescription" maxlength="3000" placeholder="Description"></textarea>
  <label>Save to</label><div id="importSections">${destinationOptions()}</div>
  <p class="hint">For a batch of direct image or video links, same-type media are grouped into one gallery or playlist.</p>
- <div class="row"><button class="b" data-action="import">Save links only (no media fetch)</button><button class="b" data-action="close">Cancel</button></div>`);
+ <div class="row"><button class="b p" id="saveImportButton" data-action="saveImport">Save URL(s)</button><button class="b" data-action="close">Cancel</button></div>`);
 }
 function previewPanel(){
  const state=V.preview;if(!state)return;
@@ -142,7 +142,9 @@ function previewPanel(){
   const gallery=page.media.length?`<div class="media-grid preview-grid">${tiles||'<p class="hint">All media are hidden. Use Show hidden media to restore them.</p>'}</div>`:`<p class="hint">${page.error?'This URL could not be previewed.':'No media was detected; the URL will still be included in the full-page viewer.'}</p>`;
   return`<section class="preview-page"><h3>${pageIndex+1}. ${esc(page.title||host(page.url))} <span>${page.media.length} media${page.error?` · ${esc(page.error)}`:''}</span></h3>${gallery}</section>`;
  }).join('');
- $('#extractionPreview').innerHTML=`<div class="extraction-preview"><div class="extract-summary"><span><b>${state.pages.length} URL${state.pages.length===1?'':'s'} previewed</b><br><span class="hint">${countSelected} media selected · ${hiddenCount} hidden${state.errors.length?` · ${state.errors.length} preview error(s)`:''}</span></span><div><button class="b" data-action="toggleHiddenPreview">${state.showHidden?'Hide previously hidden':'Show previously hidden'} (${hiddenCount})</button><button class="b p" data-action="savePreview">Save ${countSelected?'selected media and URLs':'URLs for full-page viewing'}</button></div></div>${sections}</div>`;
+ $('#extractionPreview').innerHTML=`<div class="extraction-preview"><div class="extract-summary"><span><b>${state.pages.length} URL${state.pages.length===1?'':'s'} previewed</b><br><span class="hint">${countSelected} media selected · ${hiddenCount} hidden${state.errors.length?` · ${state.errors.length} preview error(s)`:''}</span></span><div><button class="b" data-action="toggleHiddenPreview">${state.showHidden?'Hide previously hidden':'Show previously hidden'} (${hiddenCount})</button></div></div>${sections}</div>`;
+ const saveButton=$('#saveImportButton');
+ if(saveButton)saveButton.textContent=countSelected?'Save selected media and URLs':'Save URLs for full-page viewing';
 }
 async function previewPage(requestedUrls){
  const inputs=requestedUrls||$('#urls').value.split(/\r?\n/).map(value=>value.trim()).filter(Boolean);
@@ -386,9 +388,10 @@ function renderWatchPage(pushScroll=false,message=''){
  const pageControls=pages.length>1?`<div class="watch-page-buttons"><button class="b watch-page-button" data-watch-action="previousPage" aria-label="Previous URL" title="Previous URL"${watch.pageIndex===0?' disabled':''}>${icon('M15 18l-6-6 6-6')}</button><button class="b watch-page-button" data-watch-action="nextPage" aria-label="Next URL" title="Next URL"${watch.pageIndex===pages.length-1?' disabled':''}>${icon('M9 18l6-6-6-6')}</button></div>`:'';
  const hiddenControl=hiddenCount?`<button class="b" data-watch-action="toggleHidden">${V.showHiddenMedia?'Hide hidden':'Show hidden'} (${hiddenCount})</button>`:'';
  const controls=pageControls||hiddenControl?`<div class="watch-controls">${pageControls}${hiddenControl}</div>`:'';
- const backAction=active&&item.type!=='image'?'showGrid':'back';
- const backTarget=active&&item.type!=='image'?'URL image gallery':'library';
- const navigation=`<header class="watch-header"><button class="b watch-back-button" data-watch-action="${backAction}" aria-label="Back to ${backTarget}"><svg class="watch-back-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg><span>${active&&item.type!=='image'?'Gallery':'Library'}</span></button><div class="watch-heading"><strong>${esc(item.title)}</strong><span>${pages.length>1?`URL ${watch.pageIndex+1} of ${pages.length} · `:''}${esc(pageTitle)}</span></div>${controls}</header>`;
+ const hasGallery=['gallery','playlist'].includes(item.type)||media.length>1;
+ const backAction=active&&hasGallery?'showGrid':'back';
+ const backTarget=active&&hasGallery?'media gallery':'library';
+ const navigation=`<header class="watch-header"><button class="b watch-back-button" data-watch-action="${backAction}" aria-label="Back to ${backTarget}"><svg class="watch-back-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg><span>${active&&hasGallery?'Gallery':'Library'}</span></button><div class="watch-heading"><strong>${esc(item.title)}</strong><span>${pages.length>1?`URL ${watch.pageIndex+1} of ${pages.length} · `:''}${esc(pageTitle)}</span></div>${controls}</header>`;
  let content='';
  if(message)content=`<div class="watch-message">${esc(message)}${item.sourceUrl?`<p><a href="${esc(item.sourceUrl)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p>`:''}<button class="b" data-watch-action="retry">Retry</button></div>`;
  else if(active&&!shouldShowGallery)content=`<div class="watch-stage" data-swipe><button class="b watch-arrow previous" data-watch-action="previousMedia" aria-label="Previous photo"${watch.mediaIndex===0?' disabled':''}>‹</button><div class="watch-stage-content">${active.embedUrl?`<iframe src="${esc(active.embedUrl)}" title="${esc(active.alt||pageTitle)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`:active.type==='video'?`<video controls autoplay playsinline preload="metadata" poster="${esc(active.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(active))}">Video playback is unavailable in this browser.</video>`:`<img class="watch-active-image${watch.mediaDirection==='next'?' slide-from-right':watch.mediaDirection==='previous'?' slide-from-left':''}" src="${esc(mediaSource(active))}" alt="${esc(active.alt||pageTitle)}">`}</div><button class="b watch-arrow next" data-watch-action="nextMedia" aria-label="Next photo"${watch.mediaIndex===media.length-1?' disabled':''}>›</button></div><div class="watch-stage-caption"><span>${watch.mediaIndex+1} / ${media.length}</span>${active.type==='image'?'':`${downloadButton(item,active)}<button class="b" data-watch-hide="${esc(active.sourceUrl)}">${(item.hiddenMediaUrls||[]).includes(active.sourceUrl)?'Unhide':'Hide'} media</button>`}</div>`;
@@ -421,7 +424,7 @@ function mediaTile(item,media,index){
  return `<div class="media-tile ${media.type==='video'?'video-tile':''}">
  <button class="media-open" data-action="openMedia" data-index="${index}" aria-label="Open ${media.type} ${index+1} of ${item.media.length}">${visual}<span class="media-number">${index+1}</span></button>
  ${downloadUrl(media)?downloadButton(item,media):''}
- <button class="media-menu-button" data-media-menu aria-label="Media options" aria-expanded="false">···</button>
+ <button class="media-menu-button" data-media-menu aria-label="Media options" aria-haspopup="menu" aria-expanded="false">${icon(icons.more)}</button>
  <div class="media-menu"><button data-media-visibility="${esc(media.sourceUrl)}">${hidden?'Unhide media':'Hide this media'}</button></div></div>`;
 }
 function libraryImageViewer(item,image,index,total,backAction){
@@ -613,7 +616,7 @@ $('#md').addEventListener('click',async e=>{
  const visibility=e.target.closest('[data-media-visibility]');
  if(visibility){await toggleMediaVisibility(V.dialogItemId,visibility.dataset.mediaVisibility);return}
  const mediaMenu=e.target.closest('[data-media-menu]');
- if(mediaMenu){const menu=mediaMenu.nextElementSibling,open=!menu.classList.contains('open');$('#bx').querySelectorAll('.media-menu.open').forEach(el=>el.classList.remove('open'));$('#bx').querySelectorAll('[data-media-menu]').forEach(el=>el.setAttribute('aria-expanded','false'));menu.classList.toggle('open',open);mediaMenu.setAttribute('aria-expanded',String(open));return}
+ if(mediaMenu){e.stopPropagation();const tile=mediaMenu.closest('.media-tile'),menu=mediaMenu.nextElementSibling,open=!menu.classList.contains('open');$('#bx').querySelectorAll('.media-menu.open').forEach(el=>{el.classList.remove('open');el.closest('.media-tile')?.classList.remove('menu-open')});$('#bx').querySelectorAll('[data-media-menu]').forEach(el=>el.setAttribute('aria-expanded','false'));menu.classList.toggle('open',open);tile.classList.toggle('menu-open',open);mediaMenu.setAttribute('aria-expanded',String(open));return}
  const previewHide=e.target.closest('[data-preview-hide]');
  if(previewHide&&V.preview){const page=V.preview.pages[Number(previewHide.dataset.previewPage)],url=previewHide.dataset.previewHide;if(page.hiddenUrls.has(url)){page.hiddenUrls.delete(url);page.selected.add(url)}else{page.hiddenUrls.add(url);page.selected.delete(url)}previewPanel();return}
  const button=e.target.closest('[data-action]');if(!button)return;
@@ -624,6 +627,7 @@ $('#md').addEventListener('click',async e=>{
  else if(action==='noteDialog')noteDialog();
  else if(action==='uploadDialog')uploadDialog();
  else if(action==='import')await saveImports();
+ else if(action==='saveImport'){if(V.preview)await savePreview();else await saveImports()}
  else if(action==='previewPage')await previewPage();
  else if(action==='savePreview')await savePreview();
  else if(action==='toggleHiddenPreview'){if(V.preview){V.preview.showHidden=!V.preview.showHidden;previewPanel()}}
@@ -657,6 +661,10 @@ $('#md').addEventListener('click',async e=>{
 });
 $('#md').addEventListener('change',e=>{
  if(e.target.matches('[data-preview-select]')&&V.preview){const page=V.preview.pages[Number(e.target.dataset.previewPage)],url=e.target.dataset.previewSelect;e.target.checked?page.selected.add(url):page.selected.delete(url);previewPanel()}
+ if(e.target.id==='mediaKind'&&V.preview){V.preview=null;$('#extractionPreview').innerHTML='';const saveButton=$('#saveImportButton');if(saveButton)saveButton.textContent='Save URL(s)'}
+});
+$('#md').addEventListener('input',e=>{
+ if(e.target.id==='urls'&&V.preview){V.preview=null;$('#extractionPreview').innerHTML='';const saveButton=$('#saveImportButton');if(saveButton)saveButton.textContent='Save URL(s)'}
 });
 $('#main').addEventListener('click',async e=>{
  const actionToggle=e.target.closest('[data-watch-menu]');
