@@ -43,8 +43,25 @@ function sectionName(id){return V.sections.find(s=>s.id===id)?.name||''}
 function sectionOptions(selected=[]){return V.sections.map(s=>`<label class="checklist"><input type="checkbox" name="section" value="${esc(s.id)}"${selected.includes(s.id)?' checked':''}> ${esc(s.name)}</label>`).join('')||'<div class="hint">No sections yet. Create one in the sidebar.</div>'}
 function destinationOptions(){return`<select class="in" name="destination" aria-label="Save destination"><option value="">Inbox</option>${V.sections.map(section=>`<option value="${esc(section.id)}">${esc(section.name)}</option>`).join('')}</select>`}
 function watchUrl(){const url=new URL(location.href);if(V.watch){url.searchParams.set('watch',V.watch.itemId);url.searchParams.set('page',String(V.watch.pageIndex));url.searchParams.set('media',String(V.watch.mediaIndex));url.searchParams.set('scroll',String(Math.max(0,Math.round(V.watch.scrollTop||0))))}else for(const key of ['watch','page','media','scroll'])url.searchParams.delete(key);return url}
-function syncWatchUrl(push=false){const url=watchUrl();history[push?'pushState':'replaceState']({grabitWatch:!!V.watch},'',url)}
-function readWatchRoute(){const params=new URLSearchParams(location.search),itemId=params.get('watch');if(!itemId){V.watch=null;$('#win').classList.remove('watch-mode');$('#main').classList.remove('full-viewer','focused-view');return false}const rawMedia=params.get('media');V.watch={itemId,pageIndex:Math.max(0,Number(params.get('page'))||0),mediaIndex:rawMedia===null?-1:Number(rawMedia),scrollTop:Math.max(0,Number(params.get('scroll'))||0),lastScrollTop:Math.max(0,Number(params.get('scroll'))||0),headerHidden:false};if(!Number.isFinite(V.watch.mediaIndex))V.watch.mediaIndex=-1;return true}
+function syncWatchUrl(push=false){
+ const url=watchUrl();
+ history[push?'pushState':'replaceState']({grabitWatch:!!V.watch},'',url);
+ try{
+  if(V.watch)sessionStorage.setItem('grabit-watch-route',JSON.stringify({itemId:V.watch.itemId,pageIndex:V.watch.pageIndex,mediaIndex:V.watch.mediaIndex,scrollTop:V.watch.scrollTop||0}));
+  else sessionStorage.removeItem('grabit-watch-route');
+ }catch(error){console.warn('Grabit could not persist the current viewer position for reload:',error)}
+}
+function readWatchRoute(){
+ const params=new URLSearchParams(location.search);
+ let route=params.get('watch')?{itemId:params.get('watch'),pageIndex:params.get('page'),mediaIndex:params.get('media'),scrollTop:params.get('scroll')}:null;
+ if(!route){
+  try{route=JSON.parse(sessionStorage.getItem('grabit-watch-route')||'null')}catch(error){console.warn('Grabit could not restore the saved viewer position:',error)}
+ }
+ if(!route||typeof route.itemId!=='string'||!route.itemId){V.watch=null;$('#win').classList.remove('watch-mode');$('#main').classList.remove('full-viewer','focused-view');return false}
+ const pageIndex=Number(route.pageIndex),mediaIndex=route.mediaIndex===null||route.mediaIndex===undefined?-1:Number(route.mediaIndex),scrollTop=Number(route.scrollTop);
+ V.watch={itemId:route.itemId,pageIndex:Number.isFinite(pageIndex)?Math.max(0,pageIndex):0,mediaIndex:Number.isFinite(mediaIndex)?mediaIndex:-1,scrollTop:Number.isFinite(scrollTop)?Math.max(0,scrollTop):0,lastScrollTop:Number.isFinite(scrollTop)?Math.max(0,scrollTop):0,headerHidden:false};
+ return true;
+}
 function allTags(){return [...new Set(V.items.flatMap(i=>i.tags||[]))].sort((a,b)=>a.localeCompare(b))}
 function navItem(view,label,ic,count,sectionId){return `<div class="nv${V.view===view&&(view!=='section'||V.sectionId===sectionId)?' on':''}" role="button" tabindex="0" data-view="${view}"${sectionId?` data-section="${esc(sectionId)}"`:''}>${icon(ic)}<span>${esc(label)}</span>${count?`<em>${count}</em>`:''}</div>`}
 function renderNav(){
@@ -165,8 +182,9 @@ async function savePreview(){
  const title=$('#importTitle').value.trim()||firstPage.title||host(firstPage.url);
  const description=$('#importDescription').value.trim()||firstPage.description||'';
  try{
-  const allVideos=savedMedia.length>0&&savedMedia.every(media=>media.type==='video');
-  const type=!savedMedia.length?'bookmark':state.pages.length===1&&savedMedia.length===1?savedMedia[0].type:allVideos?'playlist':'gallery';
+  const selectedMedia=savedMedia.filter(entry=>!entry.hidden);
+  const allVideos=selectedMedia.length>0&&selectedMedia.every(media=>media.type==='video');
+  const type=!selectedMedia.length?'bookmark':state.pages.length===1&&selectedMedia.length===1?selectedMedia[0].type:allVideos?'playlist':'gallery';
   const item=emptyItem({type,title,description,sourceUrl:firstPage.url,media:savedMedia.map((entry,position)=>({type:entry.type,sourceUrl:entry.url,embedUrl:entry.embedUrl||'',thumbnailUrl:entry.thumbnailUrl||'',alt:entry.alt||'',width:entry.width,height:entry.height,hidden:entry.hidden,position,pageIndex:entry.pageIndex})),thumbnailUrl:selected.find(media=>media.type==='image')?.url||selected[0]?.thumbnailUrl||fallbackThumbnail(type),sectionIds:chosen});
   item.canonicalUrl=firstPage.canonicalUrl;item.sourceUrls=state.pages.map(page=>page.url);item.sourcePages=state.pages.map((page,index)=>({url:page.url,canonicalUrl:page.canonicalUrl,title:page.title,description:page.description,index,extracted:page.extracted,media:savedMedia.filter(media=>media.pageIndex===index).map(({url,...media},position)=>({...media,sourceUrl:url,position,pageIndex:index}))}));item.hiddenMediaUrls=hiddenMediaUrls;
   await storeItem(item);
@@ -292,8 +310,13 @@ function embedPage(url,data){
  if(embed&&!(embed.type==='video'&&page.media.filter(media=>media.type==='video').length>1)){
   const sourceMedia=page.media.find(media=>media.type===embed.type)||page.media.find(media=>media.type==='image')||page.media.find(media=>media.type==='video');
   const thumbnail=page.media.find(media=>media.type==='image')?.url||page.media.find(media=>media.type==='video')?.thumbnailUrl||fallbackThumbnail(embed.type);
+  const embeddedMedia={type:embed.type,url,sourceUrl:url,embedUrl:embed.url,thumbnailUrl:thumbnail,downloadUrl:sourceMedia?.url||'',alt:page.title};
+  if(embed.type==='video'){
+   page.media=[embeddedMedia];
+   return page;
+  }
   page.media=page.media.filter(media=>media.type!=='video'&&media.url!==thumbnail);
-  page.media.unshift({type:embed.type,url,sourceUrl:url,embedUrl:embed.url,thumbnailUrl:thumbnail,downloadUrl:sourceMedia?.url||'',alt:page.title});
+  page.media.unshift(embeddedMedia);
  }
  return page;
 }
@@ -355,11 +378,12 @@ function renderWatchPage(pushScroll=false,message=''){
  if(!item){main.classList.remove('focused-view');main.innerHTML=`<div class="watch-error"><p>This saved item is no longer available.</p><button class="b" data-watch-action="back">Back to library</button></div>`;return}
  const pages=sourcePages(item);watch.pageIndex=Math.max(0,Math.min(watch.pageIndex,pages.length-1));const page=pages[watch.pageIndex],media=watchPageMedia(item,page);
  watch.mediaIndex=Math.max(-1,Math.min(watch.mediaIndex,media.length-1));const active=watch.mediaIndex>=0?media[watch.mediaIndex]:null;
- main.classList.toggle('focused-view',!!active);
- main.classList.toggle('library-image-view',item.type==='image'&&!!active);
+ const shouldShowGallery=!active&&(['gallery','playlist'].includes(item.type)||(media.length>1&&['image','video'].includes(item.type)));
+ main.classList.toggle('focused-view',!!active&&!shouldShowGallery);
+ main.classList.toggle('library-image-view',item.type==='image'&&!!active&&!shouldShowGallery);
  const pageTitle=page.title||item.title||host(page.url);
  const hiddenCount=(item.hiddenMediaUrls||[]).length;
- const pageControls=pages.length>1?`<button class="b" data-watch-action="previousPage"${watch.pageIndex===0?' disabled':''}>‹ Previous URL</button><button class="b" data-watch-action="nextPage"${watch.pageIndex===pages.length-1?' disabled':''}>Next URL ›</button>`:'';
+ const pageControls=pages.length>1?`<div class="watch-page-buttons"><button class="b watch-page-button" data-watch-action="previousPage" aria-label="Previous URL" title="Previous URL"${watch.pageIndex===0?' disabled':''}>${icon('M15 18l-6-6 6-6')}</button><button class="b watch-page-button" data-watch-action="nextPage" aria-label="Next URL" title="Next URL"${watch.pageIndex===pages.length-1?' disabled':''}>${icon('M9 18l6-6-6-6')}</button></div>`:'';
  const hiddenControl=hiddenCount?`<button class="b" data-watch-action="toggleHidden">${V.showHiddenMedia?'Hide hidden':'Show hidden'} (${hiddenCount})</button>`:'';
  const controls=pageControls||hiddenControl?`<div class="watch-controls">${pageControls}${hiddenControl}</div>`:'';
  const backAction=active&&item.type!=='image'?'showGrid':'back';
@@ -367,7 +391,7 @@ function renderWatchPage(pushScroll=false,message=''){
  const navigation=`<header class="watch-header"><button class="b watch-back-button" data-watch-action="${backAction}" aria-label="Back to ${backTarget}"><svg class="watch-back-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg><span>${active&&item.type!=='image'?'Gallery':'Library'}</span></button><div class="watch-heading"><strong>${esc(item.title)}</strong><span>${pages.length>1?`URL ${watch.pageIndex+1} of ${pages.length} · `:''}${esc(pageTitle)}</span></div>${controls}</header>`;
  let content='';
  if(message)content=`<div class="watch-message">${esc(message)}${item.sourceUrl?`<p><a href="${esc(item.sourceUrl)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p>`:''}<button class="b" data-watch-action="retry">Retry</button></div>`;
- else if(active)content=`<div class="watch-stage" data-swipe><button class="b watch-arrow previous" data-watch-action="previousMedia" aria-label="Previous photo"${watch.mediaIndex===0?' disabled':''}>‹</button><div class="watch-stage-content">${active.embedUrl?`<iframe src="${esc(active.embedUrl)}" title="${esc(active.alt||pageTitle)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`:active.type==='video'?`<video controls autoplay playsinline preload="metadata" poster="${esc(active.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(active))}">Video playback is unavailable in this browser.</video>`:`<img class="watch-active-image${watch.mediaDirection==='next'?' slide-from-right':watch.mediaDirection==='previous'?' slide-from-left':''}" src="${esc(mediaSource(active))}" alt="${esc(active.alt||pageTitle)}">`}</div><button class="b watch-arrow next" data-watch-action="nextMedia" aria-label="Next photo"${watch.mediaIndex===media.length-1?' disabled':''}>›</button></div><div class="watch-stage-caption"><span>${watch.mediaIndex+1} / ${media.length}</span>${active.type==='image'?'':`${downloadButton(item,active)}<button class="b" data-watch-hide="${esc(active.sourceUrl)}">${(item.hiddenMediaUrls||[]).includes(active.sourceUrl)?'Unhide':'Hide'} media</button>`}</div>`;
+ else if(active&&!shouldShowGallery)content=`<div class="watch-stage" data-swipe><button class="b watch-arrow previous" data-watch-action="previousMedia" aria-label="Previous photo"${watch.mediaIndex===0?' disabled':''}>‹</button><div class="watch-stage-content">${active.embedUrl?`<iframe src="${esc(active.embedUrl)}" title="${esc(active.alt||pageTitle)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`:active.type==='video'?`<video controls autoplay playsinline preload="metadata" poster="${esc(active.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(active))}">Video playback is unavailable in this browser.</video>`:`<img class="watch-active-image${watch.mediaDirection==='next'?' slide-from-right':watch.mediaDirection==='previous'?' slide-from-left':''}" src="${esc(mediaSource(active))}" alt="${esc(active.alt||pageTitle)}">`}</div><button class="b watch-arrow next" data-watch-action="nextMedia" aria-label="Next photo"${watch.mediaIndex===media.length-1?' disabled':''}>›</button></div><div class="watch-stage-caption"><span>${watch.mediaIndex+1} / ${media.length}</span>${active.type==='image'?'':`${downloadButton(item,active)}<button class="b" data-watch-hide="${esc(active.sourceUrl)}">${(item.hiddenMediaUrls||[]).includes(active.sourceUrl)?'Unhide':'Hide'} media</button>`}</div>`;
  else if(page.error)content=`<div class="watch-message">Could not load this URL: ${esc(page.error)}<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p><button class="b" data-watch-action="retry">Retry</button></div>`;
  else if(media.length)content=`<div class="watch-page-info"><span>${esc(pageTitle)} · ${media.length} items</span>${page.url?`<a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original</a>`:''}</div><div class="watch-grid">${media.map((entry,index)=>watchMediaTile(item,entry,index)).join('')}</div>`;
  else if(hiddenCount&&!V.showHiddenMedia)content=`<div class="watch-message">All media on this URL are hidden. Use “Show hidden” to restore them.</div>`;
@@ -406,11 +430,12 @@ function libraryImageViewer(item,image,index,total,backAction){
 }
 function renderItemViewer(item){
  V.dialogMode='view';const media=viewerMedia(item);if(V.mediaIndex>=media.length)V.mediaIndex=media.length-1;const focused=V.mediaIndex>=0?media[V.mediaIndex]:null;
+ const shouldShowGallery=!focused&&(['gallery','playlist'].includes(item.type)||(media.length>1&&['image','video'].includes(item.type)));
  let display='',imageViewMode=false;
- if(focused){
+ if(focused&&!shouldShowGallery){
   if(focused.type==='image'&&!focused.embedUrl){imageViewMode=true;display=libraryImageViewer(item,focused,V.mediaIndex,media.length,'backToGallery')}
   else display=`<div class="focus-media">${focused.embedUrl?`<iframe src="${esc(focused.embedUrl)}" title="${esc(item.title)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen loading="lazy"></iframe>`:focused.type==='video'?`<video controls autoplay playsinline preload="metadata" poster="${esc(focused.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(focused))}">Video playback is unavailable in this browser.</video>`:`<img src="${esc(mediaSource(focused))}" alt="${esc(item.title)} — image ${V.mediaIndex+1}">`}</div><div class="bar media-navigation"><button class="b" data-action="mediaPrev" aria-label="Previous media">‹ Previous</button><span>${V.mediaIndex+1} / ${media.length}</span><button class="b" data-action="mediaNext" aria-label="Next media">Next ›</button></div><div class="row">${downloadButton(item,focused)}<button class="b" data-media-visibility="${esc(focused.sourceUrl)}">${(item.hiddenMediaUrls||[]).includes(focused.sourceUrl)?'Unhide':'Hide'} this media</button><button class="b" data-action="backToGallery">Back to ${item.type==='playlist'?'playlist':'gallery'}</button></div>`;
- }else if(['gallery','playlist'].includes(item.type)){
+ }else if(shouldShowGallery||(!focused&&['gallery','playlist'].includes(item.type))){
   const hiddenCount=(item.hiddenMediaUrls||[]).length;
   display=`${hiddenCount?`<div class="row hidden-toggle"><button class="b" data-action="toggleHiddenMedia">${V.showHiddenMedia?'Hide hidden media':'Show hidden media'} (${hiddenCount})</button></div>`:''}<div class="media-grid">${media.map((entry,index)=>mediaTile(item,entry,index)).join('')||'<p class="hint">No visible media in this gallery.</p>'}</div>`;
  }else if(item.type==='video'&&media[0]){
@@ -680,7 +705,10 @@ $('#main').addEventListener('scroll',()=>{
 });
 $('#main').addEventListener('touchstart',event=>{if(V.watch&&V.watch.mediaIndex>=0&&event.target.closest('[data-swipe]')){const touch=event.changedTouches[0];V.watch.touchStart={x:touch.clientX,y:touch.clientY}}},{passive:true});
 $('#main').addEventListener('touchend',event=>{if(!V.watch||V.watch.mediaIndex<0||!V.watch.touchStart)return;const touch=event.changedTouches[0],deltaX=touch.clientX-V.watch.touchStart.x,deltaY=touch.clientY-V.watch.touchStart.y;delete V.watch.touchStart;if(Math.abs(deltaX)<55||Math.abs(deltaX)<Math.abs(deltaY)*1.2)return;const action=deltaX<0?'nextMedia':'previousMedia';$(`[data-watch-action="${action}"]:not(:disabled)`)?.click()},{passive:true});
-addEventListener('popstate',()=>{if(readWatchRoute())renderWatchPage(true);else render()});
+addEventListener('popstate',()=>{
+ if(!new URLSearchParams(location.search).has('watch'))try{sessionStorage.removeItem('grabit-watch-route')}catch(error){console.warn('Grabit could not clear the saved viewer position:',error)}
+ if(readWatchRoute())renderWatchPage(true);else render();
+});
 $('#main').addEventListener('change',async e=>{
  if(e.target.id==='typeFilter'){V.type=e.target.value;render()}
  if(e.target.id==='sortOrder'){V.sort=e.target.value;render()}

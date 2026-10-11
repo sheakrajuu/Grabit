@@ -37,7 +37,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .watch-header{transition:transform .22s ease,margin-bottom .22s ease,opacity .16s ease}
 .focused-view .watch-header{position:relative;top:auto;flex:none}
 #main.library-image-view .watch-header{min-height:48px;padding:2px 8px;border-bottom:0;background:transparent;backdrop-filter:none}
-#main.library-image-view .watch-heading,#main.library-image-view .watch-controls{display:none}
+#main.library-image-view .watch-heading{display:none}
+#main.library-image-view .watch-controls{display:flex;margin-left:auto}
 #main.library-image-view .watch-header>.watch-back-button{width:44px;min-width:44px;height:44px;min-height:44px;padding:0;border-radius:50%}
 #main.library-image-view .watch-content.focused-media-view{width:100%;padding:0}
 #main.library-image-view .watch-stage{min-height:0;background:transparent}
