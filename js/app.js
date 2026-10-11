@@ -1,6 +1,7 @@
-import {$,esc,uid,host,validUrl,normalized,classify,fallbackThumbnail,socialMediaEmbed} from './utils.js';
+import {$,esc,uid,host,validUrl,normalized,classify,fallbackThumbnail,socialMediaEmbed,videoCollectionTitle} from './utils.js';
 import {openDB,migrateLegacy,loadLibrary,storeItem,storeSection,removeItem,removeSection} from './storage.js';
 import {previewUrl} from './importer.js';
+import {createLibraryShareLink,hasLibraryShareLink,readLibraryShareLink} from './share.js';
 
 'use strict';
 const V={view:'all',sectionId:null,tag:null,q:'',type:'all',sort:'recent',selectMode:false,selected:new Set(),mediaIndex:-1,dialogItemId:null,dialogMode:'view',items:[],sections:[],downloads:[],downloadPreview:null,downloadError:'',downloadUrl:'',installPrompt:null,preview:null,showingHiddenMedia:false,watch:null,watchScrollTimer:null,watchResizeObserver:null};
@@ -91,11 +92,25 @@ function matchingItems(){
 }
 function thumbUrl(item){if(item.type==='note')return '';return item.thumbnailUrl||item.media?.find(m=>m.type==='image')?.sourceUrl||item.media?.find(m=>m.thumbnailUrl)?.thumbnailUrl||fallbackThumbnail(item.type)}
 function card(item){
- const thumb=thumbUrl(item);const labels={bookmark:'WEB',note:'NOTE',image:'IMAGE',video:'VIDEO',gallery:`GALLERY · ${item.media.length}`,playlist:`PLAYLIST · ${item.media.length}`};
+ const thumb=thumbUrl(item);const hasMorePlaylistVideos=item.type==='playlist'&&item.sourcePages?.some(page=>page.playlistPaging&&page.playlistHasMore);const labels={bookmark:'WEB',note:'NOTE',image:'IMAGE',video:'VIDEO',gallery:`GALLERY · ${item.media.length}`,playlist:`PLAYLIST · ${item.media.length}${hasMorePlaylistVideos?'+':''}`};
  const image=item.type==='note'?'':`<img class="art" src="${esc(thumb)}" alt="" loading="lazy" decoding="async">`;
  return `<article class="card${item.type==='note'?' note-card':''}" data-id="${esc(item.id)}" tabindex="0" aria-label="${esc(item.title)}">
  ${image}<span class="bd">${labels[item.type]||'ITEM'}</span><div class="cap">${esc(item.title||'Untitled')}</div>${item.sourceDomain?`<div class="source">${esc(item.sourceDomain)}</div>`:''}
  <button class="card-menu-button" data-card-menu="${esc(item.id)}" aria-label="More actions for ${esc(item.title)}" aria-haspopup="menu" aria-expanded="false">${icon(icons.more)}</button><div class="card-menu" role="menu">${item.sectionIds?.length?`<button role="menuitem" data-card-action="allVisibility" data-id="${esc(item.id)}">${item.hiddenFromAll?'Show in All content':'Hide from All content'}</button>`:''}<button role="menuitem" data-card-action="edit" data-id="${esc(item.id)}">Edit</button><button role="menuitem" data-card-action="favorite" data-id="${esc(item.id)}">${item.isFavorite?'Remove favorite':'Add to favorites'}</button><button role="menuitem" data-card-action="archive" data-id="${esc(item.id)}">${item.isArchived?'Restore':'Archive'}</button><button role="menuitem" class="d" data-card-action="delete" data-id="${esc(item.id)}">Delete</button></div>${V.selectMode?`<input class="select-card" type="checkbox" data-select="${esc(item.id)}" aria-label="Select ${esc(item.title)}"${V.selected.has(item.id)?' checked':''} style="position:absolute;top:9px;left:9px;width:19px;height:19px;accent-color:var(--ac)">`:''}</article>`;
+}
+function positionCardMenu(menu,button){
+ const margin=8,trigger=button.getBoundingClientRect(),bounds=menu.getBoundingClientRect();
+ const left=Math.max(margin,Math.min(trigger.right-bounds.width,innerWidth-bounds.width-margin));
+ const below=trigger.bottom+6,above=trigger.top-bounds.height-6;
+ const top=below+bounds.height<=innerHeight-margin||above<margin?Math.min(below,innerHeight-bounds.height-margin):above;
+ menu.style.setProperty('--menu-left',`${left}px`);
+ menu.style.setProperty('--menu-top',`${Math.max(margin,top)}px`);
+}
+function closeCardMenus(){
+ document.querySelectorAll('.card-menu.open').forEach(menu=>{
+  menu.classList.remove('open');menu.style.removeProperty('--menu-left');menu.style.removeProperty('--menu-top');
+  menu.closest('.card')?.classList.remove('menu-open');menu.previousElementSibling?.setAttribute('aria-expanded','false');
+ });
 }
 function titleForView(){return V.view==='section'?sectionName(V.sectionId):({all:'All content',inbox:'Inbox',favorites:'Favorites',recent:'Recently added',downloads:'Download',archived:'Archived'}[V.view]||'All content')}
 function render(){
@@ -118,14 +133,14 @@ function addDialog(){
 }
 function importDialog(){
  V.preview=null;
- show(`<b>Save URL(s)</b><p class="hint">Paste a webpage or public social-media post URL to preview its images and videos. Grabit supports public Instagram, Facebook, Pinterest, TikTok, YouTube, Vimeo, and X/Twitter posts where their providers permit embeds. Private, login-only, or restricted posts may not be available.</p>
+ show(`<b>Save URL(s)</b><p class="hint">Save webpages or media links. Creator lists become playlists with 10 videos per page; use the arrows to browse.</p>
  <label for="urls">URL(s)</label><textarea class="in" id="urls" placeholder="https://example.com/article&#10;https://example.com/photo.jpg" autocomplete="url"></textarea>
- <label for="mediaKind">Media to detect</label><select class="in" id="mediaKind"><option value="all">Auto-detect images and videos</option><option value="image">Images only</option><option value="video">Videos only</option></select><p class="hint">Direct image and video links are detected by type. Webpage previews include all detected types unless you choose a filter.</p>
+ <label for="mediaKind">Media to detect</label><select class="in" id="mediaKind"><option value="all">Auto-detect images and videos</option><option value="image">Images only</option><option value="video">Videos only</option></select>
  <div class="row"><button class="b p" data-action="previewPage">Detect and preview media</button></div><div id="extractionPreview"></div>
  <label for="importTitle">Title (optional; applied when importing one URL)</label><input class="in" id="importTitle" maxlength="240" placeholder="Page title">
  <label for="importDescription">Description (optional)</label><textarea class="in" id="importDescription" maxlength="3000" placeholder="Description"></textarea>
  <label>Save to</label><div id="importSections">${destinationOptions()}</div>
- <p class="hint">For a batch of direct image or video links, same-type media are grouped into one gallery or playlist.</p>
+ <p class="hint">Multiple direct links are grouped into a gallery or playlist.</p>
  <div class="row"><button class="b p" id="saveImportButton" data-action="saveImport">Save URL(s)</button><button class="b" data-action="close">Cancel</button></div>`);
 }
 function previewPanel(){
@@ -140,7 +155,8 @@ function previewPanel(){
    <button class="media-menu-button" data-preview-page="${pageIndex}" data-preview-hide="${esc(media.url)}" aria-label="${page.hiddenUrls.has(media.url)?'Unhide':'Hide'} this media">${page.hiddenUrls.has(media.url)?'Unhide':'Hide'}</button>
   </div>`).join('');
   const gallery=page.media.length?`<div class="media-grid preview-grid">${tiles||'<p class="hint">All media are hidden. Use Show hidden media to restore them.</p>'}</div>`:`<p class="hint">${page.error?'This URL could not be previewed.':'No media was detected; the URL will still be included in the full-page viewer.'}</p>`;
-  return`<section class="preview-page"><h3>${pageIndex+1}. ${esc(page.title||host(page.url))} <span>${page.media.length} media${page.error?` · ${esc(page.error)}`:''}</span></h3>${gallery}</section>`;
+  const warnings=[page.mediaWarning,page.previewWarning,page.truncated?'Only the first 500 media items are shown.': ''].filter(Boolean);
+  return`<section class="preview-page"><h3>${pageIndex+1}. ${esc(page.title||host(page.url))} <span>${page.media.length} media${page.error?` · ${esc(page.error)}`:''}</span></h3>${warnings.map(warning=>`<p class="hint" role="status">${esc(warning)}</p>`).join('')}${gallery}</section>`;
  }).join('');
  $('#extractionPreview').innerHTML=`<div class="extraction-preview"><div class="extract-summary"><span><b>${state.pages.length} URL${state.pages.length===1?'':'s'} previewed</b><br><span class="hint">${countSelected} media selected · ${hiddenCount} hidden${state.errors.length?` · ${state.errors.length} preview error(s)`:''}</span></span><div><button class="b" data-action="toggleHiddenPreview">${state.showHidden?'Hide previously hidden':'Show previously hidden'} (${hiddenCount})</button></div></div>${sections}</div>`;
  const saveButton=$('#saveImportButton');
@@ -181,14 +197,16 @@ async function savePreview(){
  const existingItems=V.items.filter(item=>state.pages.some(page=>item.canonicalUrl===page.canonicalUrl||normalized(item.sourceUrl)===page.canonicalUrl||item.sourceUrls?.some(saved=>normalized(saved)===page.canonicalUrl)));
  const hiddenMediaUrls=[...new Set([...existingItems.flatMap(item=>item.hiddenMediaUrls||[]),...state.pages.flatMap(page=>[...page.hiddenUrls])])];
  const savedMedia=state.pages.flatMap((page,pageIndex)=>page.media.filter(media=>page.selected.has(media.url)||page.hiddenUrls.has(media.url)).map(media=>({...media,pageIndex,hidden:page.hiddenUrls.has(media.url)})));
+ const isVideoCollection=Boolean(videoCollectionTitle(firstPage.url));
+ if(isVideoCollection&&!savedMedia.some(media=>media.type==='video')){toast('Select at least one video to save this playlist.');return}
  const title=$('#importTitle').value.trim()||firstPage.title||host(firstPage.url);
  const description=$('#importDescription').value.trim()||firstPage.description||'';
  try{
   const selectedMedia=savedMedia.filter(entry=>!entry.hidden);
   const allVideos=selectedMedia.length>0&&selectedMedia.every(media=>media.type==='video');
-  const type=!selectedMedia.length?'bookmark':state.pages.length===1&&selectedMedia.length===1?selectedMedia[0].type:allVideos?'playlist':'gallery';
-  const item=emptyItem({type,title,description,sourceUrl:firstPage.url,media:savedMedia.map((entry,position)=>({type:entry.type,sourceUrl:entry.url,embedUrl:entry.embedUrl||'',thumbnailUrl:entry.thumbnailUrl||'',alt:entry.alt||'',width:entry.width,height:entry.height,hidden:entry.hidden,position,pageIndex:entry.pageIndex})),thumbnailUrl:selected.find(media=>media.type==='image')?.url||selected[0]?.thumbnailUrl||fallbackThumbnail(type),sectionIds:chosen});
-  item.canonicalUrl=firstPage.canonicalUrl;item.sourceUrls=state.pages.map(page=>page.url);item.sourcePages=state.pages.map((page,index)=>({url:page.url,canonicalUrl:page.canonicalUrl,title:page.title,description:page.description,index,extracted:page.extracted,media:savedMedia.filter(media=>media.pageIndex===index).map(({url,...media},position)=>({...media,sourceUrl:url,position,pageIndex:index}))}));item.hiddenMediaUrls=hiddenMediaUrls;
+  const type=isVideoCollection?'playlist':!selectedMedia.length?'bookmark':state.pages.length===1&&selectedMedia.length===1?selectedMedia[0].type:allVideos?'playlist':'gallery';
+  const item=emptyItem({type, title,description,sourceUrl:firstPage.url,media:savedMedia.map((entry,position)=>({type:entry.type,sourceUrl:entry.url,embedUrl:entry.embedUrl||'',thumbnailUrl:entry.thumbnailUrl||'',alt:entry.alt||'',width:entry.width,height:entry.height,hidden:entry.hidden,position:entry.position??position,pageIndex:entry.pageIndex})),thumbnailUrl:selected.find(media=>media.type==='image')?.url||selected[0]?.thumbnailUrl||fallbackThumbnail(type),sectionIds:chosen});
+  item.canonicalUrl=firstPage.canonicalUrl;item.sourceUrls=state.pages.map(page=>page.url);  item.sourcePages=state.pages.map((page,index)=>({url:page.url,canonicalUrl:page.canonicalUrl,title:page.title,description:page.description,index,extracted:page.extracted,refetchOnOpen:videoCollectionTitle(page.url)?false:page.refetchOnOpen===true,playlistPaging:page.playlistPaging===true,playlistStart:page.playlistStart||1,playlistHasMore:page.playlistHasMore===true,playlistHasMoreByStart:page.playlistHasMoreByStart||{[page.playlistStart||1]:page.playlistHasMore===true},mediaWarning:page.mediaWarning||'',previewWarning:page.previewWarning||'',truncated:!!page.truncated,media:savedMedia.filter(media=>media.pageIndex===index).map(({url,...media},position)=>({...media,sourceUrl:url,position:media.position??position,pageIndex:index}))}));item.hiddenMediaUrls=hiddenMediaUrls;
   await storeItem(item);
   await refreshLibrary();V.preview=null;hide();render();toast(`Saved ${state.pages.length} URL(s) and ${selected.length} media item(s).`);
  }catch(error){reportError('Could not save extracted media',error)}
@@ -218,6 +236,7 @@ async function manageSection(id){
 }
 function detail(id){
  const item=V.items.find(x=>x.id===id);if(!item)return;
+ if(item.type==='note'){V.dialogItemId=id;V.mediaIndex=-1;renderItemViewer(item);return}
  startWatch(id);
 }
 function startWatch(id){
@@ -233,7 +252,12 @@ function sourcePages(item){
  if(Array.isArray(item.sourcePages)&&item.sourcePages.length)return item.sourcePages.map((page,index)=>({...page,index,media:Array.isArray(page.media)?page.media:item.media.filter(media=>(media.pageIndex||0)===index)}));
  return[{url:item.sourceUrl||'',title:item.title||host(item.sourceUrl),description:item.description||'',media:orderedMedia(item),index:0}];
 }
-function watchPageMedia(item,page){return page.media||[]}
+function watchPageMedia(item,page){
+ const media=page.media||[];
+ if(!page.playlistPaging)return media;
+ const start=page.playlistStart||1;
+ return media.filter(entry=>(entry.position??0)>=start-1&&(entry.position??0)<start+9);
+}
 function defaultThumbnail(item){
  const hidden=new Set(item.hiddenMediaUrls||[]);
  const media=(item.media||[]).filter(entry=>!hidden.has(entry.sourceUrl));
@@ -272,9 +296,9 @@ async function downloadMedia(url,{itemId='',title='Media',type='image',thumbnail
 function renderDownloadHistory(){
  const records=V.downloads;
  const downloads=V.downloadPreview;
- const content=downloads?downloads.media.length?`<h2 class="download-heading">${esc(downloads.title)} <span>${downloads.media.length} downloadable media candidate(s)</span></h2><p class="hint">Candidates with known dimensions are listed highest-resolution first. Providers may restrict access, and Grabit cannot download protected or login-only media.</p><div class="download-discovery-grid">${downloads.media.map((media,index)=>`<article class="download-discovery-card"><div class="download-discovery-thumb">${media.type==='video'?`<video src="${esc(media.url)}" poster="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" muted playsinline preload="none"></video>`:`<img src="${esc(media.thumbnailUrl||media.url)}" alt="" loading="lazy" decoding="async">`}</div><div class="download-discovery-copy"><strong>${esc(media.type==='video'?'Video':'Image')} ${index+1}${index===0?' · highest exposed quality':''}</strong><span>${media.width||media.height?`${media.width||'?'} × ${media.height||'?'} px · `:''}${esc(host(media.url))}</span></div>${media.embedUrl?`<p class="hint">This is a provider embed; a downloadable file URL was not exposed.</p>`:`<button class="b p" data-discovery-download="${index}">Download${index===0?' highest listed quality':''}</button>`}</article>`).join('')}</div>`:`<div class="download-empty"><b>No downloadable media was exposed.</b><p>Some social posts provide an embed only, or require sign-in. Grabit does not bypass provider restrictions. Try a public page with directly accessible media.</p></div>`:'';
+ const content=downloads?downloads.media.length?`<h2 class="download-heading">${esc(downloads.title)} <span>${downloads.media.length} media candidate(s)</span></h2><p class="hint">Candidates with known dimensions are listed highest-resolution first. Providers may restrict access, and Grabit cannot download protected or login-only media.</p>${downloads.warning?`<p class="hint" role="status">${esc(downloads.warning)}</p>`:''}${downloads.truncated?'<p class="hint" role="status">Only the first 500 media items are shown.</p>':''}<div class="download-discovery-grid">${downloads.media.map((media,index)=>`<article class="download-discovery-card"><div class="download-discovery-thumb">${media.type==='video'?`<video src="${esc(media.url)}" poster="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" muted playsinline preload="none"></video>`:`<img src="${esc(media.thumbnailUrl||media.url)}" alt="" loading="lazy" decoding="async">`}</div><div class="download-discovery-copy"><strong>${esc(media.type==='video'?'Video':'Image')} ${index+1}${index===0?' · highest exposed quality':''}</strong><span>${media.width||media.height?`${media.width||'?'} × ${media.height||'?'} px · `:''}${esc(host(media.url))}</span></div>${media.embedUrl?`<p class="hint">This is a provider embed; a downloadable file URL was not exposed.</p>`:`<button class="b p" data-discovery-download="${index}">Download${index===0?' highest listed quality':''}</button>`}</article>`).join('')}</div>`:`<div class="download-empty"><b>No downloadable media was exposed.</b><p>Some social posts provide an embed only, or require sign-in. Grabit does not bypass provider restrictions. Try a public page with directly accessible media.</p></div>`:'';
  const history=records.length?`<div class="download-history">${records.map((entry,index)=>`<article class="download-record"><img src="${esc(entry.thumbnailUrl||fallbackThumbnail(entry.type||'media'))}" alt="" loading="lazy"><div class="download-record-copy"><strong>${esc(entry.title||entry.filename||'Media download')}</strong><span>${esc(entry.filename||host(entry.url||''))} · ${esc(new Date(entry.downloadedAt).toLocaleString())}</span></div><button class="b" data-download-history="${index}">Download again</button></article>`).join('')}</div>`:'<p class="hint">Downloads started from this tool or saved media will appear here.</p>';
- $('#main').innerHTML=`<section class="download-tool"><h2>Download from a URL</h2><p class="hint">Enter a public webpage, image, or video URL. Grabit will list media URLs exposed by the page and offer direct downloads when the server can access them.</p><form class="download-url-form" id="downloadUrlForm"><input class="in" id="downloadUrlInput" type="url" required maxlength="2048" autocomplete="url" placeholder="https://example.com/gallery" value="${esc(V.downloadUrl)}" aria-label="URL to find downloadable media"><button class="b p" type="submit"${V.downloadError==='loading'?' disabled':''}>${V.downloadError==='loading'?'Finding media…':'Find media'}</button></form>${V.downloadError&&V.downloadError!=='loading'?`<p class="download-error" role="alert">${esc(V.downloadError)}</p>`:''}${content}</section><section class="download-history-section"><div class="download-history-heading"><h2>Download history</h2><button class="b" data-clear-downloads${records.length?'':' disabled'}>Clear history</button></div>${history}</section>`;
+ $('#main').innerHTML=`<section class="download-tool"><h2>Download from a URL</h2><p class="hint">Enter a public webpage, image, or video URL. Grabit will list media URLs exposed by the page and offer direct downloads when the server can access them. Supported XHamster/XHOfficial creator video lists are scanned with yt-dlp, up to 500 videos.</p><form class="download-url-form" id="downloadUrlForm"><input class="in" id="downloadUrlInput" type="url" required maxlength="2048" autocomplete="url" placeholder="https://example.com/gallery" value="${esc(V.downloadUrl)}" aria-label="URL to find downloadable media"><button class="b p" type="submit"${V.downloadError==='loading'?' disabled':''}>${V.downloadError==='loading'?'Finding media…':'Find media'}</button></form>${V.downloadError&&V.downloadError!=='loading'?`<p class="download-error" role="alert">${esc(V.downloadError)}</p>`:''}${content}</section><section class="download-history-section"><div class="download-history-heading"><h2>Download history</h2><button class="b" data-clear-downloads${records.length?'':' disabled'}>Clear history</button></div>${history}</section>`;
 }
 async function discoverDownloads(){
  const input=$('#downloadUrlInput'),url=validUrl(input?.value||'');
@@ -286,7 +310,7 @@ async function discoverDownloads(){
   if(kind==='image'||kind==='video')page={title:host(url.href),media:[{type:kind,url:url.href,thumbnailUrl:kind==='image'?url.href:''}]};
   else page=await previewUrl(url.href);
   const media=(Array.isArray(page.media)?page.media:[]).filter(entry=>entry&&typeof entry.url==='string').sort((a,b)=>(Number(b.width||0)*Number(b.height||0))-(Number(a.width||0)*Number(a.height||0)));
-  V.downloadPreview={title:page.title||host(url.href),media};
+  V.downloadPreview={title:page.title||host(url.href),media,truncated:!!page.truncated,warning:page.mediaWarning||page.previewWarning||''};
   V.downloadError='';
   renderDownloadHistory();
  }catch(error){
@@ -307,7 +331,7 @@ async function installGrabit(){
  toast(isApple?'To install, use Share, then Add to Home Screen.':'Use your browser menu and choose Install app or Add to Home screen.');
 }
 function embedPage(url,data){
- const page={url,canonicalUrl:data.canonicalUrl||normalized(url),title:data.title||host(url),description:data.description||'',media:Array.isArray(data.media)?data.media:[]};
+ const page={url,canonicalUrl:data.canonicalUrl||normalized(url),title:data.title||host(url),description:data.description||'',media:Array.isArray(data.media)?data.media:[],refetchOnOpen:data.refetchOnOpen===true,mediaWarning:data.mediaWarning||'',previewWarning:data.previewWarning||'',truncated:!!data.truncated,playlistPaging:videoCollectionTitle(url)!=='',playlistStart:Number.isSafeInteger(data.start)?data.start:1,playlistHasMore:data.hasMore===true};
  const embed=socialMediaEmbed(url);
  if(embed&&!(embed.type==='video'&&page.media.filter(media=>media.type==='video').length>1)){
   const sourceMedia=page.media.find(media=>media.type===embed.type)||page.media.find(media=>media.type==='image')||page.media.find(media=>media.type==='video');
@@ -341,18 +365,57 @@ async function loadWatchPage(item){
   for(let index=0;index<urls.length;index++){
    const url=urls[index];if(!url||!validUrl(url))continue;
    const saved=savedPages.find(page=>normalized(page.url)===normalized(url));
-   if(saved?.extracted){pages.push({...saved,index,media:(saved.media||[]).map(media=>({...media,type:media.type||'image',sourceUrl:media.sourceUrl||media.url||'',position:media.position||0,pageIndex:index}))});continue}
+   if(saved?.extracted&&!saved.refetchOnOpen){pages.push({...saved,index,media:(saved.media||[]).map(media=>({...media,type:media.type||'image',sourceUrl:media.sourceUrl||media.url||'',position:media.position||0,pageIndex:index}))});continue}
    try{pages.push({...await extractPageForWatch(url),index,extracted:true})}
-   catch(error){pages.push({...saved,url,canonicalUrl:saved?.canonicalUrl||normalized(url),title:saved?.title||host(url),description:saved?.description||'',media:[],index,extracted:false,error:error.message})}
+   catch(error){
+    const cachedMedia=saved?.media||[];
+    pages.push({...saved,url,canonicalUrl:saved?.canonicalUrl||normalized(url),title:saved?.title||host(url),description:saved?.description||'',media:cachedMedia,index,extracted:cachedMedia.length>0,...(cachedMedia.length?{mediaWarning:`Could not refresh this video list: ${error.message}`}:{error:error.message})});
+   }
   }
   if(!pages.length)throw new Error('No valid page URLs are saved for this item.');
-  item.sourcePages=pages.map((page,index)=>({...page,index,media:page.media.map((media,position)=>({...media,type:media.type||'image',sourceUrl:media.url||media.sourceUrl||'',position,pageIndex:index,thumbnailUrl:media.thumbnailUrl||''}))}));
+  item.sourcePages=pages.map((page,index)=>({...page,index,media:page.media.map((media,position)=>({...media,type:media.type||'image',sourceUrl:media.url||media.sourceUrl||'',position:media.position??position,pageIndex:index,thumbnailUrl:media.thumbnailUrl||''}))}));
   item.media=item.sourcePages.flatMap(page=>page.media);
   if(item.type==='bookmark'&&item.media.length===1&&item.media[0].type==='video'&&V.watch?.itemId===item.id)V.watch.mediaIndex=0;
   if(!item.thumbnailUrl||item.thumbnailUrl.startsWith('data:image/svg+xml,')||(item.hiddenMediaUrls||[]).includes(item.thumbnailUrl))item.thumbnailUrl=defaultThumbnail(item);
   item.updatedAt=new Date().toISOString();await storeItem(item);await refreshLibrary();
   if(V.watch?.itemId===item.id){V.watch.loading=false;renderWatchPage(false);if(item.sourcePages.some(page=>page.error))toast('Some URLs could not be previewed; use the URL controls to continue or retry.')}
  }catch(error){console.error('Could not load saved page media:',error);if(V.watch?.itemId===item.id){V.watch.loading=false;V.watch.retrying=true;renderWatchPage(false,`Could not fetch this page's media: ${error.message}`)}}
+}
+async function loadPlaylistBatch(item,page,start){
+ const watch=V.watch;if(!watch||watch.loading)return;
+ const pages=Array.isArray(item.sourcePages)&&item.sourcePages.length?item.sourcePages:[page];
+ item.sourcePages=pages;
+ const sourcePage=pages[page.index]||page;
+ watch.loading=true;renderWatchPage(false,`Loading videos ${start}–${Math.min(start+9,500)}…`);
+ try{
+  const result=await previewUrl(sourcePage.url,{start});
+  const videos=result.media.filter(media=>media.type==='video');
+  if(!videos.length)throw new Error('No videos were returned for this playlist page.');
+  const known=new Set(sourcePage.media.map(media=>media.sourceUrl));
+  sourcePage.media.push(...videos.map((media,index)=>({
+   ...media,
+   sourceUrl:media.sourceUrl||media.url,
+   position:start-1+index,
+   pageIndex:sourcePage.index
+  })).filter(media=>!known.has(media.sourceUrl)));
+  sourcePage.playlistStart=start;sourcePage.playlistHasMore=result.hasMore===true;sourcePage.playlistHasMoreByStart={...(sourcePage.playlistHasMoreByStart||{}),[start]:result.hasMore===true};sourcePage.mediaWarning=result.mediaWarning||'';
+  item.media=item.sourcePages.flatMap(source=>source.media);
+  item.thumbnailUrl=item.thumbnailUrl||sourcePage.media.find(media=>media.thumbnailUrl)?.thumbnailUrl||fallbackThumbnail('playlist');
+  item.updatedAt=new Date().toISOString();await storeItem(item);await refreshLibrary();
+  watch.mediaIndex=-1;watch.showingHidden=false;watch.scrollTop=0;watch.loading=false;syncWatchUrl();renderWatchPage(true);
+ }catch(error){
+  watch.loading=false;renderWatchPage();toast(`Could not load videos ${start}–${Math.min(start+9,500)}: ${error.message}`);
+ }
+}
+async function changePlaylistBatch(item,page,start){
+ if(start>=1&&start<=500&&page.media.some(media=>media.position>=start-1&&media.position<start+9)){
+  page.playlistStart=start;page.playlistHasMore=page.playlistHasMoreByStart?.[start]??page.media.some(media=>media.position>=start+9);
+  item.updatedAt=new Date().toISOString();
+  try{await storeItem(item);await refreshLibrary()}catch(error){reportError('Could not save playlist position',error);return}
+  V.watch.mediaIndex=-1;V.watch.showingHidden=false;V.watch.scrollTop=0;syncWatchUrl();renderWatchPage(true);
+  return;
+ }
+ if(start>=1&&start<=500)await loadPlaylistBatch(item,page,start);
 }
 function watchMediaTile(item,media,index){
  const hidden=(item.hiddenMediaUrls||[]).includes(media.sourceUrl);
@@ -389,7 +452,9 @@ function renderWatchPage(pushScroll=false,message=''){
  main.classList.toggle('focused-view',!!active&&!shouldShowGallery);
  main.classList.toggle('library-image-view',item.type==='image'&&!!active&&!shouldShowGallery);
  const pageTitle=page.title||item.title||host(page.url);
- const pageControls=pages.length>1?`<div class="watch-page-buttons"><button class="watch-page-button" data-watch-action="previousPage" aria-label="Previous URL" title="Previous URL"${watch.pageIndex===0?' disabled':''}>${icon('M15 18l-6-6 6-6')}</button><button class="watch-page-button" data-watch-action="nextPage" aria-label="Next URL" title="Next URL"${watch.pageIndex===pages.length-1?' disabled':''}>${icon('M9 18l6-6-6-6')}</button></div>`:'';
+ const pageControls=page.playlistPaging
+  ?`<div class="watch-page-buttons"><button class="watch-page-button" data-watch-action="previousPlaylistBatch" aria-label="Previous 10 videos" title="Previous 10 videos"${page.playlistStart<=1?' disabled':''}>${icon('M15 18l-6-6 6-6')}</button><button class="watch-page-button" data-watch-action="nextPlaylistBatch" aria-label="Next 10 videos" title="Next 10 videos"${!page.playlistHasMore?' disabled':''}>${icon('M9 18l6-6-6-6')}</button></div>`
+  :pages.length>1?`<div class="watch-page-buttons"><button class="watch-page-button" data-watch-action="previousPage" aria-label="Previous URL" title="Previous URL"${watch.pageIndex===0?' disabled':''}>${icon('M15 18l-6-6 6-6')}</button><button class="watch-page-button" data-watch-action="nextPage" aria-label="Next URL" title="Next URL"${watch.pageIndex===pages.length-1?' disabled':''}>${icon('M9 18l6-6-6-6')}</button></div>`:'';
  const controls=pageControls?`<div class="watch-controls has-page-navigation">${pageControls}</div>`:'';
  const hasGallery=['gallery','playlist'].includes(item.type)||media.length>1;
  const backAction=active&&hasGallery?'showGrid':'back';
@@ -398,13 +463,15 @@ function renderWatchPage(pushScroll=false,message=''){
  let content='';
  if(message)content=`<div class="watch-message">${esc(message)}${item.sourceUrl?`<p><a href="${esc(item.sourceUrl)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p>`:''}<button class="b" data-watch-action="retry">Retry</button></div>`;
  else if(active&&!shouldShowGallery)content=`<div class="watch-stage" data-swipe><button class="b watch-arrow previous" data-watch-action="previousMedia" aria-label="Previous photo"${watch.mediaIndex===0?' disabled':''}>‹</button><div class="watch-stage-content">${activeHidden?`<span class="hidden-media-placeholder">${active.type==='video'?'Hidden video':'Hidden image'}</span>`:active.embedUrl?`<iframe src="${esc(active.embedUrl)}" title="${esc(active.alt||pageTitle)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`:active.type==='video'?`<video controls autoplay playsinline preload="metadata" poster="${esc(active.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(active))}">Video playback is unavailable in this browser.</video>`:`<img class="watch-active-image${watch.mediaDirection==='next'?' slide-from-right':watch.mediaDirection==='previous'?' slide-from-left':''}" src="${esc(mediaSource(active))}" alt="${esc(active.alt||pageTitle)}">`}</div><button class="b watch-arrow next" data-watch-action="nextMedia" aria-label="Next photo"${watch.mediaIndex===media.length-1?' disabled':''}>›</button></div><div class="watch-stage-caption"><span>${watch.mediaIndex+1} / ${media.length}</span>${activeHidden?`<button class="b" data-watch-hide="${esc(active.sourceUrl)}">Unhide ${active.type}</button>`:active.type==='image'?'':`${downloadButton(item,active)}<button class="b" data-watch-hide="${esc(active.sourceUrl)}">Hide ${active.type}</button>`}</div>`;
- else if(page.error)content=`<div class="watch-message">Could not load this URL: ${esc(page.error)}<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p><button class="b" data-watch-action="retry">Retry</button></div>`;
- else if(media.length)content=`<div class="watch-page-info"><span>${esc(pageTitle)} · ${watch.showingHidden?`${hiddenMedia.length} hidden items`:`${feedMedia.length} items`}</span>${page.url?`<a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original</a>`:''}${hiddenMedia.length||watch.showingHidden?`<button class="watch-hidden-toggle" data-watch-action="${watch.showingHidden?'showGalleryFeed':'showHiddenMedia'}">${watch.showingHidden?'Back to gallery':`Hidden items (${hiddenMedia.length})`}</button>`:''}</div>${displayedMedia.length?`<div class="watch-grid">${displayedMedia.map(({entry,index})=>watchMediaTile(item,entry,index)).join('')}</div>`:`<div class="watch-message">${watch.showingHidden?'There are no hidden media on this URL.':'No visible media. Open Hidden items to manage hidden media.'}</div>`}`;
+ else if(page.error&&!media.length)content=`<div class="watch-message">Could not load this URL: ${esc(page.error)}<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p><button class="b" data-watch-action="retry">Retry</button></div>`;
+ else if(media.length)content=`<div class="watch-page-info"><span>${esc(pageTitle)} · ${watch.showingHidden?`${hiddenMedia.length} hidden items`:`${feedMedia.length} items`}</span>${page.url?`<a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original</a>`:''}${hiddenMedia.length||watch.showingHidden?`<button class="watch-hidden-toggle" data-watch-action="${watch.showingHidden?'showGalleryFeed':'showHiddenMedia'}">${watch.showingHidden?'Back to gallery':`Hidden items (${hiddenMedia.length})`}</button>`:''}</div>${[page.mediaWarning,page.previewWarning,page.truncated?'Only the first 500 media items are shown.':''].filter(Boolean).map(warning=>`<p class="hint" role="status">${esc(warning)}</p>`).join('')}${displayedMedia.length?`<div class="watch-grid">${displayedMedia.map(({entry,index})=>watchMediaTile(item,entry,index)).join('')}</div>`:`<div class="watch-message">${watch.showingHidden?'There are no hidden media on this URL.':'No visible media. Open Hidden items to manage hidden media.'}</div>`}`;
  else content=`<div class="watch-message">${esc(message||'No images or videos were found on this page.')}${page.url?`<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p>`:''}</div>`;
  delete watch.mediaDirection;
  V.watchResizeObserver?.disconnect();V.watchResizeObserver=null;
  const viewerBackdrop=active?.type==='image'&&!activeHidden?`<img class="watch-viewer-backdrop" src="${esc(mediaSource(active))}" alt="" aria-hidden="true">`:'';
  main.innerHTML=`${viewerBackdrop}${navigation}<div class="watch-content${active?' focused-media-view':''}">${content}</div>`;
+ const pageInfo=main.querySelector('.watch-page-info > span');
+ if(page.playlistPaging&&pageInfo)pageInfo.textContent=`${pageTitle} · Videos ${page.playlistStart}–${page.playlistStart+media.length-1} · ${watch.showingHidden?`${hiddenMedia.length} hidden items`:`${feedMedia.length} items`}`;
  const watchHeader=main.querySelector('.watch-header');
  if(watchHeader){watchHeader.classList.toggle('header-hidden',!active&&!!watch.headerHidden);main.style.setProperty('--watch-header-height',`${watchHeader.offsetHeight}px`)}
  const watchGrid=main.querySelector('.watch-grid');
@@ -416,7 +483,8 @@ function renderWatchPage(pushScroll=false,message=''){
  }
  main.scrollTop=savedScroll;watch.scrollTop=savedScroll;
  if(message&&message.startsWith('Could not fetch')&&watch.retrying)return;
- if(!(item.type==='image'||item.type==='video'&&item.media?.length)&&!message&&!watch.extractionAttempted&&(!item.sourcePages?.length||item.sourcePages.some(page=>!page.extracted))&&!watch.loading)loadWatchPage(item);
+ const sourceNeedsRefresh=!!item.sourcePages?.some(page=>page.refetchOnOpen);
+ if((sourceNeedsRefresh||!(item.type==='image'||item.type==='video'&&item.media?.length))&&!message&&!watch.extractionAttempted&&(!item.sourcePages?.length||item.sourcePages.some(page=>!page.extracted||page.refetchOnOpen))&&!watch.loading)loadWatchPage(item);
 }
 function mediaTile(item,media,index){
  const source=mediaSource(media),hidden=(item.hiddenMediaUrls||[]).includes(media.sourceUrl);const visual=hidden
@@ -495,29 +563,54 @@ async function continueImport(pending,mode){
  const {valid,invalid,chosen,title,description,duplicates,unique}=pending;
  if(mode==='section'&&chosen.length){for(const {existing}of duplicates){if(!existing)continue;existing.sectionIds=[...new Set([...(existing.sectionIds||[]),...chosen])];existing.inbox=false;existing.updatedAt=new Date().toISOString();await storeItem(existing)}}
  const work=mode==='save'?valid:unique;if(!work.length){await refreshLibrary();hide();render();toast(`No new URLs saved. ${duplicates.length} duplicate(s) skipped; ${invalid.length} invalid URL(s).`);return}
- const kinds=work.map(classify);let saved=0;const errors=[];
+ const videoCollections=work.filter(url=>videoCollectionTitle(url));
+ const otherUrls=work.filter(url=>!videoCollectionTitle(url));
+ const kinds=otherUrls.map(classify);let saved=0;const errors=[];
+ const saveButton=$('#saveImportButton');
+ if(saveButton){saveButton.disabled=true;saveButton.textContent=videoCollections.length?'Fetching playlist…':'Saving…'}
  V.preview=null;
  try{
-  if(work.length>1&&kinds.every(kind=>kind==='image'||kind==='video')){
-   const media=work.map((url,position)=>({type:kinds[position],sourceUrl:url,thumbnailUrl:kinds[position]==='image'?url:fallbackThumbnail('video'),position,pageIndex:position}));
-   const pages=work.map((url,index)=>({url,canonicalUrl:normalized(url),title:host(url)||url,description:'',index,extracted:true,media:[media[index]]}));
+  for(const url of videoCollections){
+   try{
+    const preview=await previewUrl(url),videos=preview.media.filter(media=>media.type==='video');
+    if(!videos.length)throw new Error(`No videos were found in the creator list ${url}.`);
+    const canonicalUrl=preview.canonicalUrl||normalized(url);
+    const matchingItems=V.items.filter(item=>item.canonicalUrl===canonicalUrl||normalized(item.sourceUrl)===canonicalUrl||item.sourceUrls?.some(source=>normalized(source)===canonicalUrl));
+    const hiddenMediaUrls=[...new Set(matchingItems.flatMap(item=>item.hiddenMediaUrls||[]))];
+    const hidden=new Set(hiddenMediaUrls);
+    const media=videos.map(({url:mediaUrl,...entry},position)=>({
+     ...entry,
+     sourceUrl:entry.sourceUrl||mediaUrl,
+     hidden:hidden.has(entry.sourceUrl||mediaUrl),
+     position:entry.position??position,
+     pageIndex:0
+    }));
+    const page={url,canonicalUrl,title:preview.title||videoCollectionTitle(url),description:preview.description||'',index:0,extracted:true,refetchOnOpen:false,playlistPaging:videoCollectionTitle(url)!=='',playlistStart:preview.start||1,playlistHasMore:preview.hasMore===true,playlistHasMoreByStart:{[preview.start||1]:preview.hasMore===true},truncated:!!preview.truncated,mediaWarning:preview.mediaWarning||'',media};
+    const item=emptyItem({type:'playlist',title:work.length===1&&title?title:page.title,description:work.length===1?description:page.description,sourceUrl:url,media,thumbnailUrl:media.find(entry=>entry.thumbnailUrl&&!hidden.has(entry.sourceUrl))?.thumbnailUrl||fallbackThumbnail('playlist'),sectionIds:chosen});
+    item.canonicalUrl=canonicalUrl;item.sourceUrls=[url];item.sourcePages=[page];item.hiddenMediaUrls=hiddenMediaUrls;
+    await storeItem(item);saved++;
+   }catch(error){errors.push(`${url}: ${error.message}`)}
+  }
+  if(otherUrls.length>1&&kinds.every(kind=>kind==='image'||kind==='video')){
+   const media=otherUrls.map((url,position)=>({type:kinds[position],sourceUrl:url,thumbnailUrl:kinds[position]==='image'?url:fallbackThumbnail('video'),position,pageIndex:position}));
+   const pages=otherUrls.map((url,index)=>({url,canonicalUrl:normalized(url),title:host(url)||url,description:'',index,extracted:true,media:[media[index]]}));
    const type=kinds.every(kind=>kind==='video')?'playlist':'gallery';
-   const item=emptyItem({type,title:title||(type==='playlist'?'Video playlist':'Image gallery'),description,sourceUrl:work[0],media,thumbnailUrl:media.find(entry=>entry.type==='image')?.sourceUrl||media[0].thumbnailUrl,sectionIds:chosen});
-   item.sourceUrls=work;item.sourcePages=pages;await storeItem(item);saved++;
-  }else if(work.length>1&&kinds.includes('bookmark')){
-   const pages=work.map((url,index)=>({url,canonicalUrl:normalized(url),title:host(url)||url,description:'',index,extracted:false,media:[]}));
-   const item=emptyItem({type:'bookmark',title:title||'Saved webpages',description,sourceUrl:work[0],thumbnailUrl:fallbackThumbnail('bookmark'),sectionIds:chosen});
-   item.sourceUrls=work;item.sourcePages=pages;await storeItem(item);saved++;
+   const item=emptyItem({type,title:title||(type==='playlist'?'Video playlist':'Image gallery'),description,sourceUrl:otherUrls[0],media,thumbnailUrl:media.find(entry=>entry.type==='image')?.sourceUrl||media[0].thumbnailUrl,sectionIds:chosen});
+   item.sourceUrls=otherUrls;item.sourcePages=pages;await storeItem(item);saved++;
+  }else if(otherUrls.length>1&&kinds.includes('bookmark')){
+   const pages=otherUrls.map((url,index)=>({url,canonicalUrl:normalized(url),title:host(url)||url,description:'',index,extracted:false,media:[]}));
+   const item=emptyItem({type:'bookmark',title:title||'Saved webpages',description,sourceUrl:otherUrls[0],thumbnailUrl:fallbackThumbnail('bookmark'),sectionIds:chosen});
+   item.sourceUrls=otherUrls;item.sourcePages=pages;await storeItem(item);saved++;
   }else{
-   for(let index=0;index<work.length;index++){
-    try{const url=work[index],kind=kinds[index],media=kind==='bookmark'?[]:[{type:kind,sourceUrl:url,position:0}];const item=emptyItem({type:kind,title:work.length===1&&title?title:host(url)||url,description:work.length===1?description:'',sourceUrl:url,media,thumbnailUrl:kind==='image'?url:'',sectionIds:chosen});await storeItem(item);saved++}
-    catch(error){errors.push(`${work[index]}: ${error.message}`)}
+   for(let index=0;index<otherUrls.length;index++){
+    try{const url=otherUrls[index],kind=kinds[index],media=kind==='bookmark'?[]:[{type:kind,sourceUrl:url,position:0}];const item=emptyItem({type:kind,title:otherUrls.length===1&&title?title:host(url)||url,description:otherUrls.length===1?description:'',sourceUrl:url,media,thumbnailUrl:kind==='image'?url:'',sectionIds:chosen});await storeItem(item);saved++}
+    catch(error){errors.push(`${otherUrls[index]}: ${error.message}`)}
    }
   }
   await refreshLibrary();hide();render();const skipped=mode==='save'?0:duplicates.length;
   toast(`${saved} ${saved===1?'entry':'entries'} saved${skipped?`; ${skipped} duplicate(s) skipped`:''}${invalid.length?`; ${invalid.length} invalid URL(s)`:''}${errors.length?`; ${errors.length} failed`:''}.`);
   if(invalid.length)console.warn('Invalid URLs skipped:',invalid);if(errors.length)console.error('Some URLs could not be saved:',errors);
- }catch(error){reportError('Could not save imported URLs',error)}
+ }catch(error){if(saveButton?.isConnected){saveButton.disabled=false;saveButton.textContent='Save URL(s)'}reportError('Could not save imported URLs',error)}
 }
 async function saveNote(){
  const title=$('#noteTitle').value.trim(),notes=$('#noteText').value.trim();if(!title&&!notes){toast('Add a title or note text first.');return}
@@ -568,20 +661,50 @@ async function bulk(action,confirmed=false){
  }catch(e){reportError('Could not update selected items',e)}
 }
 function downloadJson(){
- const data={format:'grabit-library',version:1,exportedAt:new Date().toISOString(),storage:'metadata and local image data only; external media files are referenced by URL',sections:V.sections,items:V.items};
+ const data=libraryExportData();
  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`grabit-library-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Library export downloaded.');
 }
+function libraryExportData(){
+ return{format:'grabit-library',version:1,exportedAt:new Date().toISOString(),storage:'metadata and local image data only; external media files are referenced by URL',sections:V.sections,items:V.items};
+}
 function exportDialog(){
- show(`<b>Export library</b><p>Your JSON export includes sections, content records, notes, tags, and references to external URLs. Locally uploaded images are included as compressed browser-stored image data. It does not download externally hosted original media.</p><div class="row"><button class="b p" data-action="downloadExport">Download JSON</button><button class="b" data-action="restoreDialog">Restore JSON…</button><button class="b" data-action="close">Close</button></div>`);
+ show(`<b>Export library</b><p class="hint">Share a compressed link or download JSON. Anyone with the link can read it; large libraries may need JSON.</p><div class="row"><button class="b p" data-action="createShareLink">Create share link</button><button class="b" data-action="downloadExport">Download JSON</button><button class="b" data-action="restoreDialog">Import…</button><button class="b" data-action="close">Close</button></div><div id="shareLinkOutput" hidden><label for="shareLinkValue">Share link</label><textarea class="in" id="shareLinkValue" rows="4" readonly></textarea><div class="row"><button class="b" data-action="copyShareLink">Copy link</button></div></div>`);
 }
 function restoreDialog(){
- show(`<b>Restore a Grabit JSON export</b><p class="hint">Restored records are added to this browser library. Existing entries are never replaced; matching URLs are reported as duplicates.</p><label for="restoreFile">Backup file</label><input class="in" id="restoreFile" type="file" accept="application/json,.json"><div class="row"><button class="b p" data-action="restore">Validate and restore</button><button class="b" data-action="exportDialog">Back</button></div>`);
+ show(`<b>Import library</b><p class="hint">Existing items stay; duplicates are skipped.</p><label for="shareLinkInput">Share link</label><textarea class="in" id="shareLinkInput" rows="2" placeholder="Paste a Grabit share link"></textarea><div class="row"><button class="b p" data-action="importShareLink">Import share link</button></div><label for="restoreFile">JSON backup</label><input class="in" id="restoreFile" type="file" accept="application/json,.json"><div class="row"><button class="b" data-action="restore">Import JSON backup</button><button class="b" data-action="exportDialog">Back</button></div>`);
+}
+function confirmLibraryRestore(data,source){
+ V.pendingBackup=data;
+ show(`<b>Import ${esc(source)}</b><p>Import ${data.items.length} item(s) and ${data.sections.length} section(s)? Existing items stay; duplicates are skipped.</p><div class="row"><button class="b p" data-action="confirmRestore">Import library</button><button class="b" data-action="close">Cancel</button></div>`);
+}
+async function createShareLink(){
+ const button=$('[data-action="createShareLink"]');
+ if(button){button.disabled=true;button.textContent='Preparing link…'}
+ try{
+  const link=await createLibraryShareLink(libraryExportData(),location.href);
+  const output=$('#shareLinkOutput'),field=$('#shareLinkValue');
+  if(!output||!field)return;
+  field.value=link;output.hidden=false;
+  try{await navigator.clipboard.writeText(link);toast('Share link created and copied. Anyone with it can read your library.')}
+  catch(error){console.warn('Grabit could not copy the share link automatically:',error);field.focus();field.select();toast('Share link created. Copy it from the field above.')}
+ }catch(error){console.error('Could not create a library share link:',error);toast(error.message||'Could not create a share link.')}
+ finally{if(button?.isConnected){button.disabled=false;button.textContent='Create share link'}}
+}
+async function copyShareLink(){
+ const field=$('#shareLinkValue');if(!field?.value){toast('Create a share link first.');return}
+ try{await navigator.clipboard.writeText(field.value);toast('Share link copied. Anyone with it can read your library.')}
+ catch(error){console.warn('Grabit could not copy the share link automatically:',error);field.focus();field.select();toast('Copy the selected share link.')}
+}
+async function importShareLink(){
+ const value=$('#shareLinkInput')?.value.trim();if(!value){toast('Paste a Grabit share link first.');return}
+ try{confirmLibraryRestore(await readLibraryShareLink(value),'shared library')}
+ catch(error){console.error('Could not read the library share link:',error);toast(error.message||'Could not read the share link.')}
 }
 async function restoreBackup(){
  const file=$('#restoreFile').files[0];if(!file){toast('Choose a JSON backup file.');return}if(file.size>30*1024*1024){toast('Backup files must be smaller than 30 MB.');return}
  let data;try{data=JSON.parse(await file.text())}catch{toast('This file is not valid JSON.');return}
  if(data?.format!=='grabit-library'||data.version!==1||!Array.isArray(data.items)||!Array.isArray(data.sections)){toast('This is not a supported Grabit library backup.');return}
- V.pendingBackup=data;show(`<b>Confirm library restore</b><p>Restore ${data.items.length} item(s) and ${data.sections.length} section(s)? Existing library entries will not be overwritten.</p><div class="row"><button class="b p" data-action="confirmRestore">Restore backup</button><button class="b" data-action="exportDialog">Cancel</button></div>`);
+ confirmLibraryRestore(data,'JSON backup');
 }
 async function commitRestore(){
  const data=V.pendingBackup;if(!data)return;V.pendingBackup=null;
@@ -614,7 +737,7 @@ $('#add').addEventListener('click',addDialog);
 $('#themeToggle').addEventListener('click',()=>applyTheme(document.documentElement.dataset.theme==='light'?'dark':'light',true));
 $('#sbt').addEventListener('click',()=>{const win=$('#win');matchMedia('(max-width:760px)').matches?win.classList.toggle('open'):win.classList.toggle('hide')});
 $('#scrim').addEventListener('click',()=>$('#win').classList.remove('open'));
-document.addEventListener('click',e=>{if(e.target.closest('.card-menu-button,.card-menu'))return;document.querySelectorAll('.card-menu.open').forEach(menu=>{menu.classList.remove('open');menu.previousElementSibling?.setAttribute('aria-expanded','false')})});
+document.addEventListener('click',e=>{if(e.target.closest('.card-menu-button,.card-menu'))return;closeCardMenus()});
 let searchTimer;$('#q').addEventListener('input',e=>{V.q=e.target.value;clearTimeout(searchTimer);searchTimer=setTimeout(render,180)});
 $('#md').addEventListener('click',async e=>{
  if(e.target.id==='md')return;
@@ -655,6 +778,9 @@ $('#md').addEventListener('click',async e=>{
  else if(action==='cancelDeleteItem'){detail(id)}
  else if(action==='mediaPrev'||action==='mediaNext'){const item=V.items.find(x=>x.id===V.dialogItemId);if(item){const length=viewerMedia(item).length;V.mediaIndex=(V.mediaIndex+(action==='mediaPrev'?-1:1)+length)%length;renderItemViewer(item)}}
  else if(action==='downloadExport')downloadJson();
+ else if(action==='createShareLink')await createShareLink();
+ else if(action==='copyShareLink')await copyShareLink();
+ else if(action==='importShareLink')await importShareLink();
  else if(action==='exportDialog')exportDialog();
  else if(action==='restoreDialog')restoreDialog();
  else if(action==='restore')await restoreBackup();
@@ -688,13 +814,21 @@ $('#main').addEventListener('click',async e=>{
  if(downloadHistory){const record=V.downloads[Number(downloadHistory.dataset.downloadHistory)];if(record)await downloadMedia(record.url,{itemId:record.itemId,title:record.title,type:record.type,thumbnailUrl:record.thumbnailUrl});return}
  if(e.target.closest('[data-clear-downloads]')){V.downloads=[];storeDownloadHistory();render();return}
  const watchButton=e.target.closest('[data-watch-action]');
+ if(watchButton&&V.watch&&['previousPlaylistBatch','nextPlaylistBatch'].includes(watchButton.dataset.watchAction)){
+  const item=V.items.find(entry=>entry.id===V.watch.itemId),page=item?.sourcePages?.[V.watch.pageIndex];
+  if(item&&page?.playlistPaging){
+   const start=page.playlistStart||1;
+   await changePlaylistBatch(item,page,start+(watchButton.dataset.watchAction==='nextPlaylistBatch'?10:-10));
+  }
+  return;
+ }
  if(watchButton&&V.watch){const action=watchButton.dataset.watchAction,item=V.items.find(entry=>entry.id===V.watch.itemId);if(action==='back'){V.watch=null;syncWatchUrl();$('#win').classList.remove('watch-mode');$('#main').classList.remove('full-viewer','focused-view');render();return}if(action==='edit'&&item){editItem(item.id);return}if(action==='retry'&&item){item.sourcePages=null;item.media=[];V.watch.loading=false;V.watch.retrying=false;V.watch.extractionAttempted=false;loadWatchPage(item);return}if(action==='showHiddenMedia'||action==='showGalleryFeed'){V.watch.showingHidden=action==='showHiddenMedia';V.watch.mediaIndex=-1;renderWatchPage();return}if(action==='previousPage'||action==='nextPage'){const count=sourcePages(item).length;V.watch.pageIndex=Math.max(0,Math.min(count-1,V.watch.pageIndex+(action==='previousPage'?-1:1)));V.watch.mediaIndex=-1;V.watch.showingHidden=false;V.watch.scrollTop=0;syncWatchUrl();renderWatchPage(true);return}if(action==='previousMedia'||action==='nextMedia'){const page=sourcePages(item)[V.watch.pageIndex],media=watchPageMedia(item,page);V.watch.mediaIndex=Math.max(0,Math.min(media.length-1,V.watch.mediaIndex+(action==='previousMedia'?-1:1)));V.watch.mediaDirection=action==='nextMedia'?'next':'previous';syncWatchUrl();renderWatchPage();return}if(action==='showGrid'){V.watch.mediaIndex=-1;delete V.watch.mediaDirection;syncWatchUrl();renderWatchPage();return}}
  const watchHide=e.target.closest('[data-watch-hide]');if(watchHide&&V.watch){await toggleMediaVisibility(V.watch.itemId,watchHide.dataset.watchHide);return}
  const watchMediaButton=e.target.closest('[data-watch-media]');
  if(watchMediaButton&&V.watch){V.watch.mediaIndex=Number(watchMediaButton.dataset.watchMedia);V.watch.scrollTop=$('#main').scrollTop;syncWatchUrl();renderWatchPage();return}
- const menuButton=e.target.closest('[data-card-menu]');if(menuButton){e.stopPropagation();const cardEl=menuButton.closest('.card'),menu=cardEl.querySelector('.card-menu'),open=!menu.classList.contains('open');document.querySelectorAll('.card-menu.open').forEach(el=>el.classList.remove('open'));menu.classList.toggle('open',open);menuButton.setAttribute('aria-expanded',String(open));return}
+ const menuButton=e.target.closest('[data-card-menu]');if(menuButton){e.stopPropagation();const cardEl=menuButton.closest('.card'),menu=cardEl.querySelector('.card-menu'),open=!menu.classList.contains('open');closeCardMenus();if(open){menu.classList.add('open');cardEl.classList.add('menu-open');menuButton.setAttribute('aria-expanded','true');positionCardMenu(menu,menuButton)}return}
  const cardAction=e.target.closest('[data-card-action]');if(cardAction){e.stopPropagation();const id=cardAction.dataset.id,action=cardAction.dataset.cardAction,item=V.items.find(entry=>entry.id===id);if(!item)return;
-  const menu=cardAction.closest('.card-menu');if(menu){menu.classList.remove('open');menu.previousElementSibling?.setAttribute('aria-expanded','false')}
+  const menu=cardAction.closest('.card-menu');if(menu)closeCardMenus();
   if(action==='edit'){editItem(id);return}
   if(action==='favorite'){await toggleFavorite(id);return}
   if(action==='allVisibility'){item.hiddenFromAll=!item.hiddenFromAll;item.updatedAt=new Date().toISOString();try{await storeItem(item);await refreshLibrary();render();toast(item.hiddenFromAll?'Hidden from All content.':'Shown in All content.')}catch(error){reportError('Could not update All content visibility',error)}return}
@@ -709,6 +843,7 @@ $('#main').addEventListener('click',async e=>{
 });
 $('#main').addEventListener('submit',event=>{if(event.target.id==='downloadUrlForm'){event.preventDefault();discoverDownloads()}});
 $('#main').addEventListener('scroll',()=>{
+ document.querySelectorAll('.card-menu.open').forEach(menu=>{menu.classList.remove('open');menu.style.removeProperty('--menu-left');menu.style.removeProperty('--menu-top');menu.closest('.card')?.classList.remove('menu-open');menu.previousElementSibling?.setAttribute('aria-expanded','false')});
  if(!V.watch)return;
  const scrollTop=$('#main').scrollTop,previous=V.watch.lastScrollTop??scrollTop,delta=scrollTop-previous;
  V.watch.scrollTop=scrollTop;
@@ -716,6 +851,7 @@ $('#main').addEventListener('scroll',()=>{
  V.watch.lastScrollTop=scrollTop;
  clearTimeout(V.watchScrollTimer);V.watchScrollTimer=setTimeout(()=>syncWatchUrl(),180);
 });
+addEventListener('resize',closeCardMenus);
 $('#main').addEventListener('touchstart',event=>{if(V.watch&&V.watch.mediaIndex>=0&&event.target.closest('[data-swipe]')){const touch=event.changedTouches[0];V.watch.touchStart={x:touch.clientX,y:touch.clientY}}},{passive:true});
 $('#main').addEventListener('touchend',event=>{if(!V.watch||V.watch.mediaIndex<0||!V.watch.touchStart)return;const touch=event.changedTouches[0],deltaX=touch.clientX-V.watch.touchStart.x,deltaY=touch.clientY-V.watch.touchStart.y;delete V.watch.touchStart;if(Math.abs(deltaX)<55||Math.abs(deltaX)<Math.abs(deltaY)*1.2)return;const action=deltaX<0?'nextMedia':'previousMedia';$(`[data-watch-action="${action}"]:not(:disabled)`)?.click()},{passive:true});
 addEventListener('popstate',()=>{
@@ -756,7 +892,15 @@ addEventListener('appinstalled',()=>{V.installPrompt=null;toast('Grabit was inst
 document.addEventListener('error',e=>{const image=e.target;if(!(image instanceof HTMLImageElement)||image.dataset.fallbackApplied)return;image.dataset.fallbackApplied='true';image.src=fallbackThumbnail(image.closest('.card')?.querySelector('.bd')?.textContent||'media')},{capture:true});
 addEventListener('drop',e=>{e.preventDefault();const dropped=[...e.dataTransfer.files],files=dropped.filter(file=>file.type.startsWith('image/'));if(dropped.length!==files.length)toast('Only image files can be added by drag and drop.');if(!files.length)return;V.droppedFiles=files;uploadDialog()});
 async function init(){
- try{let theme='dark';try{theme=localStorage.getItem('grabit-theme')||theme}catch(error){console.warn('Grabit could not read the saved theme preference:',error)}applyTheme(theme);loadDownloadHistory();watchForAppUpdates();await openDB();await migrateLegacy();await refreshLibrary();if(readWatchRoute())renderWatchPage(true);else render()}
+ try{
+  let theme='dark';try{theme=localStorage.getItem('grabit-theme')||theme}catch(error){console.warn('Could not read the saved theme preference:',error)}
+  applyTheme(theme);loadDownloadHistory();watchForAppUpdates();await openDB();await migrateLegacy();await refreshLibrary();
+  if(hasLibraryShareLink(location.href)){
+   const shareUrl=location.href,url=new URL(location.href);url.hash='';history.replaceState(history.state,'',url);
+   try{confirmLibraryRestore(await readLibraryShareLink(shareUrl),'shared library')}
+   catch(error){console.error('Could not open the library share link:',error);toast(error.message||'Could not open the share link.');render()}
+  }else if(readWatchRoute())renderWatchPage(true);else render()
+ }
  catch(error){console.error('Grabit could not start its local library:',error);$('#main').innerHTML=`<div class="empty"><b>Grabit could not open local storage.</b><p>${esc(error.message)}</p><p>Check browser storage permissions and available space, then reload.</p></div>`;$('#add').disabled=true}
 }
 init();

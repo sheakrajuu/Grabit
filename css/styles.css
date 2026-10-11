@@ -172,8 +172,9 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .card-menu-button{position:absolute;top:7px;right:7px;z-index:3;display:grid;place-items:center;width:32px;height:32px;padding:0;border:0;border-radius:50%;background:transparent;color:white;cursor:pointer;opacity:0;transition:opacity .12s}
 .card-menu-button svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 1px 2px #000)}
 .card:hover .card-menu-button,.card:focus-within .card-menu-button,.card-menu-button[aria-expanded="true"]{opacity:1}
+.card.menu-open{z-index:20}
 .card-menu{display:none;position:absolute;z-index:5;top:43px;right:7px;min-width:150px;padding:5px;background:var(--win);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px #0004}
-.card-menu.open{display:grid}
+.card-menu.open{position:fixed;top:var(--menu-top,8px);right:auto;left:var(--menu-left,8px);z-index:50;display:grid;max-height:calc(100dvh - 16px);overflow-y:auto;overscroll-behavior:contain}
 .card-menu button{border:0;background:transparent;border-radius:6px;text-align:left;padding:8px 10px;cursor:pointer;color:var(--tx)}
 .card-menu button:hover{background:var(--card)}
 .card-menu button.d{color:#e5484d}

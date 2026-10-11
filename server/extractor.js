@@ -80,7 +80,7 @@ function publicMediaUrl(value,base){
 }
 
 export function bestSrcsetCandidate(value,base){
- const candidates=String(value||'').split(',').map((candidate,index)=>{
+ const candidates=String(value||'').split(/,\s+(?=(?:https?:\/\/|\/|\.\/|\.\.\/|data:))/i).map((candidate,index)=>{
   const [rawUrl,descriptor='']=candidate.trim().split(/\s+/);
   const url=publicMediaUrl(rawUrl,base);
   if(!url)return null;

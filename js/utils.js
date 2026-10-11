@@ -4,6 +4,7 @@ export const uid=()=>globalThis.crypto?.randomUUID?.()||`${Date.now().toString(3
 export const host=url=>{try{return new URL(url).hostname.replace(/^www\./,'')}catch{return ''}};
 export const validUrl=value=>{try{const url=new URL(value);return ['http:','https:'].includes(url.protocol)&&!!url.hostname&&!url.username&&!url.password?url:null}catch{return null}};
 export const normalized=value=>{const url=validUrl(value);if(!url)return '';url.hash='';if(url.pathname!='/')url.pathname=url.pathname.replace(/\/+$/,'');return url.href};
+export const videoCollectionTitle=value=>{const url=validUrl(value);if(!url||!['xhofficial.com','xhamster.com'].includes(url.hostname.toLowerCase().replace(/^www\./,'')))return '';const match=url.pathname.match(/^\/users\/([^/]+)\/videos\/?$/i);if(!match)return '';let name=match[1];try{name=decodeURIComponent(name)}catch{}return`${name} videos`};
 export const EXT_IMAGE=/\.(?:avif|bmp|gif|jpe?g|png|svg|webp)(?:$)/i;
 export const EXT_VIDEO=/\.(?:m4v|mov|mp4|ogv|webm)(?:$)/i;
 export const classify=url=>{const path=(validUrl(url)?.pathname||'').toLowerCase();return EXT_IMAGE.test(path)?'image':EXT_VIDEO.test(path)?'video':'bookmark'};

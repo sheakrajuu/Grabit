@@ -3,7 +3,85 @@ import assert from 'node:assert/strict';
 import {Readable} from 'node:stream';
 import {brotliCompressSync,deflateSync,gzipSync} from 'node:zlib';
 import {parsePage,bestSrcsetCandidate,resolvePublicAddress,createPinnedLookup,decompress,safeDownloadFilename,downloadPublicMedia,openPublicMedia,extractorLimits} from '../server/extractor.js';
-import {videoEmbedUrl,socialMediaEmbed} from '../js/utils.js';
+import {isVideoCollectionUrl,parseYtDlpOutput,parseYtDlpPlaylist,ytDlpTargetUrl} from '../server/playlist.js';
+import {videoEmbedUrl,socialMediaEmbed,videoCollectionTitle} from '../js/utils.js';
+
+test('recognizes supported public creator video-list URLs only',()=>{
+ assert.equal(isVideoCollectionUrl('https://xhofficial.com/users/angelofbogota/videos'),true);
+ assert.equal(isVideoCollectionUrl('https://www.xhamster.com/users/creator/videos/'),true);
+ assert.equal(isVideoCollectionUrl('https://example.com/users/creator/videos'),false);
+ assert.equal(isVideoCollectionUrl('file:///users/creator/videos'),false);
+ assert.equal(isVideoCollectionUrl('https://xhofficial.com/users/creator'),false);
+ assert.equal(isVideoCollectionUrl('https://user@xhofficial.com/users/creator/videos'),false);
+ assert.equal(ytDlpTargetUrl('https://xhofficial.com/users/creator/videos?sort=recent'),'https://xhamster.com/users/creator/videos?sort=recent');
+ assert.equal(videoCollectionTitle('https://xhofficial.com/users/angelofbogota/videos'),'angelofbogota videos');
+});
+
+test('parses yt-dlp video results as playable media and safe embeds',()=>{
+ const output=[
+  `${JSON.stringify('First video')}\thttps://xhamster.com/videos/first\thttps://cdn.example/first.mp4\thttps://cdn.example/first.jpg`,
+  `${JSON.stringify('Second video')}\thttps://xhamster.com/videos/second\tNA\thttps://cdn.example/second.jpg`,
+  `${JSON.stringify('Page URL only')}\thttps://xhamster.com/videos/page-only\thttps://xhamster.com/videos/page-only\tNA`,
+  `${JSON.stringify('Flat playlist entry')}\thttps://xhamster.com/videos/flat-entry\tNA\thttps://cdn.example/flat-entry.jpg`,
+  `${JSON.stringify('Bad URL')}\tfile:///private/video\tfile:///private/video\tNA`
+ ].join('\n');
+ const result=parseYtDlpOutput(output);
+ assert.equal(result.media.length,4);
+ assert.deepEqual(result.media[0],{
+  type:'video',
+  url:'https://cdn.example/first.mp4',
+  sourceUrl:'https://cdn.example/first.mp4',
+  thumbnailUrl:'https://cdn.example/first.jpg',
+  alt:'First video'
+ });
+ assert.deepEqual(result.media[1],{
+  type:'video',
+  url:'https://xhamster.com/videos/second',
+  sourceUrl:'https://xhamster.com/videos/second',
+  embedUrl:'https://xhamster.com/videos/second',
+  thumbnailUrl:'https://cdn.example/second.jpg',
+  alt:'Second video'
+ });
+ assert.equal(result.media[2].embedUrl,'https://xhamster.com/videos/page-only');
+ assert.deepEqual(result.media[3],{
+  type:'video',
+  url:'https://xhamster.com/videos/flat-entry',
+  sourceUrl:'https://xhamster.com/videos/flat-entry',
+  embedUrl:'https://xhamster.com/videos/flat-entry',
+  thumbnailUrl:'https://cdn.example/flat-entry.jpg',
+  alt:'Flat playlist entry'
+ });
+});
+
+test('treats unavailable flat-playlist titles as empty for metadata enrichment',()=>{
+ const result=parseYtDlpOutput(`"NA"\thttps://xhamster.com/videos/untitled\tNA\tNA`);
+ assert.equal(result.media[0].alt,'');
+ assert.equal(result.media[0].thumbnailUrl,'');
+});
+
+test('keeps original yt-dlp positions while removing duplicate playlist URLs',()=>{
+ const result=parseYtDlpPlaylist([
+  'https://xhamster.com/videos/first',
+  'https://xhamster.com/videos/first',
+  'https://xhamster.com/videos/second'
+ ].join('\n'));
+ assert.deepEqual(result,[
+  {url:'https://xhamster.com/videos/first',index:1},
+  {url:'https://xhamster.com/videos/second',index:3}
+ ]);
+});
+
+test('caps playlist results at 500 and reports truncation',()=>{
+ const output=Array.from({length:501},(_,index)=>[
+  JSON.stringify(`Video ${index}`),
+  `https://xhamster.com/videos/${index}`,
+  `https://cdn.example/${index}.mp4`,
+  'NA'
+ ].join('\t')).join('\n');
+ const result=parseYtDlpOutput(output);
+ assert.equal(result.media.length,500);
+ assert.equal(result.truncated,true);
+});
 
 test('extracts page metadata and canonical URL',()=>{
  const html='<title>Example page | Example</title><meta property="og:description" content="Useful page"><link rel="canonical" href="/canonical"><meta property="og:image" content="/cover.jpg">';
@@ -29,6 +107,9 @@ test('prefers the highest-resolution responsive image candidate',()=>{
  assert.equal(page.media[0].width,1800);
  assert.deepEqual(bestSrcsetCandidate('/2x.jpg 2x, /3x.jpg 3x','https://example.test/'),{
   url:'https://example.test/3x.jpg',density:3
+ });
+ assert.deepEqual(bestSrcsetCandidate('https://cdn.example/s(w:320,h:180),q:90/first.jpg 320w, https://cdn.example/second.jpg 640w','https://example.test/'),{
+  url:'https://cdn.example/second.jpg',width:640
  });
 });
 

@@ -1,6 +1,6 @@
 # Grabit
 
-Grabit is a local-first visual library for saving links, images, videos, notes, and webpage media into an Inbox or named sections. The existing vanilla HTML/CSS/JavaScript interface is split into focused files; a small, dependency-free Node server serves the app and safely fetches public webpages for previews.
+Grabit is a local-first visual library for saving links, images, videos, notes, and webpage media into an Inbox or named sections. The existing vanilla HTML/CSS/JavaScript interface is split into focused files; a small Node server serves the app and safely fetches public webpages for previews.
 
 ## Project structure
 
@@ -8,19 +8,23 @@ Grabit is a local-first visual library for saving links, images, videos, notes, 
 - `css/styles.css` — responsive layout, Pinterest-style grids, dialogs, and light/dark themes.
 - `js/app.js` — library UI, card actions, import flow, editing, and import/export.
 - `js/importer.js` — client-side API request for webpage previews.
+- `js/share.js` — compressed, self-contained library share links.
 - `js/storage.js` — IndexedDB persistence and legacy-data migration.
 - `js/utils.js` — shared URL, DOM, and thumbnail helpers.
 - `server.js` — static-file server and webpage-preview API.
 - `server/extractor.js` — bounded HTML extraction with public-address and redirect checks.
+- `server/playlist.js` — bounded yt-dlp discovery for supported creator video-list URLs.
+- `requirements.txt` — Python dependency used by server-side video-list discovery.
 - `test/extractor.test.js` — extractor and network-address tests.
 - `icons/git.svg` — app favicon; matching PNGs are used for installable app icons.
 - `render.yaml` — Render Node Web Service configuration.
 
 ## Run locally
 
-Install Node.js 20 or newer, then run:
+Install Node.js 20 or newer and Python 3, install the Python requirements, then run:
 
 ```sh
+python -m pip install -r requirements.txt
 npm start
 ```
 
@@ -32,31 +36,31 @@ Create a Render Web Service from this repository using the included `render.yaml
 
 ## Saving webpage media
 
-Choose **Add → Save URL(s)** and paste a webpage, direct media, or public social-media post URL. **Detect and preview media** automatically distinguishes direct image/video URLs and extracts both real page images and videos; choose **Images only** or **Videos only** to filter. Video poster metadata is used only as a thumbnail, not saved as an image. Public Instagram posts/reels, Facebook posts/videos, Pinterest pins, TikTok videos, YouTube, Vimeo, and X/Twitter posts can also be saved through provider embeds when static media extraction is unavailable and the provider permits embedding. The preview uses a Pinterest-style media grid; choose which media to save, or explicitly hide media so it remains hidden on future previews of that page in this browser.
+Choose **Add → Save URL(s)** and paste a webpage, direct media, or public social-media post URL. **Detect and preview media** automatically distinguishes direct image/video URLs and extracts both real page images and videos; choose **Images only** or **Videos only** to filter. Video poster metadata is used only as a thumbnail, not saved as an image. Public XHamster/XHOfficial creator video-list pages are fetched with yt-dlp in batches of 10, including per-video thumbnails, without downloading media files or resolving direct stream URLs. A creator URL saves as a playlist; multiple creator URLs create one playlist per URL. Open a playlist and use the previous/next arrows to browse its video gallery in batches. Public Instagram posts/reels, Facebook posts/videos, Pinterest pins, TikTok videos, YouTube, Vimeo, and X/Twitter posts can also be saved through provider embeds when static media extraction is unavailable and the provider permits embedding. The preview uses a Pinterest-style media grid; choose which media to save, or explicitly hide media so it remains hidden on future previews of that page in this browser.
 
 Choose Inbox or a section in the save form for URLs, notes, image uploads, and extracted media. Dragging images into the app opens the same save form so you can choose their destination. Pasting multiple URLs saves them together as one browsable sequence: each URL gets its own page, with **Next URL** and **Previous URL** controls. The first selected image is the gallery cover. Video poster images are used as thumbnails when the page provides one; otherwise Grabit displays a generic video thumbnail. Notes are text-only cards and do not have thumbnails.
 
 Opening a saved item navigates to a full-viewport page instead of a floating dialog. Each URL's media appears in a Pinterest-style masonry grid. Select a tile to view it full-screen, then move left/right with the arrow buttons, keyboard, or a horizontal touch swipe. The page URL records the current saved item, source URL, selected media, and scroll position, so reloading or sharing that browser URL restores the viewing position while the item remains in the local library. Use **‹ Library** to return to the library.
 
-Use **Download** to enter a public URL and find media exposed by the page. Responsive image candidates use the largest declared `srcset` size; candidates with known pixel dimensions are listed first. Download each exposed file directly from the results. Downloads started there or from saved media are recorded in the browser-local history. Files are streamed by the Node server without an app-imposed file-size cap and protected against private-network destinations. This is best-effort: Grabit cannot determine quality variants hidden behind scripts, login sessions, streaming manifests, or provider APIs, and an embed-only result is not downloadable.
+Use **Download** to enter a public URL and find media exposed by the page. Supported XHamster/XHOfficial creator video-list URLs use yt-dlp to discover up to 500 videos. Responsive image candidates use the largest declared `srcset` size; candidates with known pixel dimensions are listed first. Download each exposed file directly from the results. Downloads started there or from saved media are recorded in the browser-local history. Files are streamed by the Node server without an app-imposed file-size cap and protected against private-network destinations. This is best-effort: Grabit cannot determine quality variants hidden behind scripts, login sessions, streaming manifests, or provider APIs, and an embed-only result is not downloadable.
 
 Opening a saved item uses a full-viewport page. Direct video files play in Grabit's native HTML5 video player. Public social post embeds open inside Grabit's viewer, with the post image used as a thumbnail when the provider exposes one. A media item's hide control lets you hide it; hidden-media choices can be restored from the viewer.
 
-Extraction covers up to 500 unique media URLs from at most 6 MB of static HTML per page. It does not execute JavaScript. JavaScript-rendered galleries, authenticated/private pages, streaming manifests, and some platform embeds will not be fully extractable. Extraction is best-effort and depends on source markup and media availability. Grabit does not bypass access controls, paywalls, or DRM.
+Static extraction covers up to 500 unique media URLs from at most 6 MB of HTML per page. It does not execute JavaScript. The yt-dlp profile extractor is limited to supported public XHamster/XHOfficial creator video-list pages and the first 500 results. JavaScript-rendered galleries, authenticated/private pages, streaming manifests, and some platform embeds will not be fully extractable. Extraction is best-effort and depends on source markup and media availability. Grabit does not bypass access controls, paywalls, or DRM.
 
 ## Library and privacy
 
-Grabit stores records, sections, custom thumbnails, hidden-media choices, and uploaded image data in IndexedDB in the current browser profile. App updates do not delete or recreate this database; the service worker only replaces Grabit's versioned app-shell cache, and it does not cache or clear user media. Existing tabs check for updates while open, apply a waiting update automatically, and reload after open dialogs or selected files are no longer at risk. Browser storage itself can still be cleared by the user, browser settings, or device storage pressure, so keep a JSON export backup. Grabit does not have accounts, cloud sync, remote database storage, or server-side user libraries. Hidden media will not sync between devices or browser profiles. The extraction server temporarily fetches the page HTML to make a preview; it does not store the page or media. Rate limiting and request size/time limits are applied to the preview endpoint.
+Grabit stores records, sections, custom thumbnails, hidden-media choices, and uploaded image data in IndexedDB in the current browser profile. App updates do not delete or recreate this database; the service worker only replaces Grabit's versioned app-shell cache, and it does not cache or clear user media. Existing tabs check for updates while open, apply a waiting update automatically, and reload after open dialogs or selected files are no longer at risk. Browser storage itself can still be cleared by the user, browser settings, or device storage pressure, so keep a JSON export backup. Grabit does not have accounts, cloud sync, remote database storage, or server-side user libraries. Hidden media will not sync between devices or browser profiles. The extraction server temporarily fetches page metadata and media URLs to make a preview; it does not store the page or media. yt-dlp is used only for supported public creator video-list URLs and runs without browser cookies or media downloads. Rate limiting and request size/time limits are applied to the preview endpoint.
 
 Locally uploaded images are resized and compressed before browser storage. External media stays at its source URL and may expire or be blocked by the source. Browser storage can be cleared or evicted; use **Export library** regularly and store the resulting JSON backup somewhere safe. Backups contain external media references rather than downloaded copies.
 
-To restore, open **Export library → Restore JSON**, select a Grabit JSON export, review the confirmation, and restore. Existing content is not overwritten; duplicate records are skipped.
+To move a library to another browser, open **Export library → Create share link** and send the copied link privately. The compressed library data is stored in the URL fragment and is not uploaded to Grabit's server; anyone who has the link can read it. Open the link in Grabit or paste it into **Export library → Import… → Grabit share link**, review the confirmation, and import. Share links have a size limit; use a JSON backup for a large library. To restore a JSON export instead, choose it under **Import… → JSON backup**. Existing content is not overwritten; duplicate records are skipped.
 
 ## Current functionality
 
 - IndexedDB persistence, one-time migration from the older `lib1` local-storage format, and JSON export/restore.
 - All content, Inbox, Favorites, Recently added, Archived, and named sections, with an option to hide section items from All content.
-- Add bookmarks, direct image/video links, public social-media posts, notes, uploaded images, and webpage-extracted image/video groups.
+- Add bookmarks, direct image/video links, public social-media posts, notes, uploaded images, webpage-extracted image/video groups, and supported yt-dlp-discovered creator playlists.
 - Responsive Pinterest-style card and gallery grids, thumbnail fallbacks, custom thumbnail URLs, image/video viewers, and browser-native video playback.
 - Card-level three-dot menu for edit, favorite, archive/restore, and delete. Opening a card is read-only; editing is available only from the menu.
 - Persistent hidden-media selections for a page, plus hide/unhide controls in gallery and playlist viewers.
@@ -68,7 +72,7 @@ To restore, open **Export library → Restore JSON**, select a Grabit JSON expor
 ## Known limitations
 
 - This is a browser-local library, not a multi-user cloud service. Data is isolated per browser/profile and is not recoverable from the server.
-- The extractor parses static markup; it cannot run page scripts. Up to 500 media URLs are returned; larger pages report when the cap was reached.
+- The HTML extractor parses static markup; it cannot run page scripts. Up to 500 media URLs are returned; larger pages report when the cap was reached. yt-dlp discovery is limited to supported XHamster/XHOfficial creator video-list URLs and up to 500 results.
 - Thumbnail fallback graphics are shown if no thumbnail/poster can be extracted or a remote thumbnail fails. Grabit does not extract video frames. Provider embeds depend on the platform, account status, region, and its current embed policy.
 - "Social media" is not a single interoperable format. The extractor can only read public static HTML; login-required, private, dynamically rendered, and restricted posts cannot reliably be fetched. Provider embeds for supported public social post URLs are subject to each platform's embed policy, regional availability, and account state. Grabit does not bypass platform protections.
 - Not every URL is a downloadable file. The downloader accepts publicly accessible direct media responses and rejects HTML pages and private-network destinations. Browser-local downloads and server-side fetching cannot access a user's logged-in cookies, and Grabit cannot download video data that a social provider exposes only through an embed or protected stream.
@@ -78,7 +82,7 @@ To restore, open **Export library → Restore JSON**, select a Grabit JSON expor
 
 ## Render deployment
 
-The included `render.yaml` configures Grabit as a Render **Node Web Service**. Connect the repository to Render and create the service from the Blueprint; Render installs the Node project and starts `npm start`. The server listens on Render's assigned `PORT` and binds to `0.0.0.0` for deployment. The `/api/health` endpoint is used for health checks. GitHub Actions runs the Node test suite on pushes and pull requests; a manually triggered health check can use the service's `/api/health` URL.
+The included `render.yaml` configures Grabit as a Render **Node Web Service**. Connect the repository to Render and create the service from the Blueprint; Render installs the Node project, installs yt-dlp from `requirements.txt`, and starts `npm start`. The server listens on Render's assigned `PORT` and binds to `0.0.0.0` for deployment. The `/api/health` endpoint is used for health checks. GitHub Actions runs the Node test suite on pushes and pull requests; a manually triggered health check can use the service's `/api/health` URL.
 
 To have GitHub Actions ping the deployed service every seven minutes, add a repository Actions variable named `GRABIT_HEALTH_URL` with the service's public base URL (for example, `https://your-service.onrender.com`, without `/api/health`). The scheduled workflow requests `${GRABIT_HEALTH_URL}/api/health`; it runs only on the repository's default branch. GitHub cron jobs are best-effort and can be delayed or skipped, so this does not guarantee that a sleeping Render instance stays awake. Use a Render plan with the required availability if continuous uptime matters.
 
