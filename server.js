@@ -18,12 +18,23 @@ const MAX_SHARES_PER_WINDOW=10;
 const buckets=new Map();
 const shareStore=createShareStore();
 const publicFiles=new Set([
- '/library.html','/manifest.webmanifest','/service-worker.js',
+ '/library.html','/manifest.webmanifest','/service-worker.js','/THIRD-PARTY-NOTICES.txt','/licenses/COPYING.GPLv2',
  '/css/styles.css',
- '/js/app.js','/js/backup.js','/js/importer.js','/js/library-filter.js','/js/share.js','/js/storage.js','/js/utils.js',
+ '/js/app.js','/js/backup.js','/js/importer.js','/js/library-filter.js','/js/share.js','/js/storage.js','/js/utils.js','/js/video-transcoder.js',
+ '/vendor/ffmpeg/ffmpeg/index.js','/vendor/ffmpeg/ffmpeg/classes.js','/vendor/ffmpeg/ffmpeg/const.js','/vendor/ffmpeg/ffmpeg/errors.js','/vendor/ffmpeg/ffmpeg/utils.js','/vendor/ffmpeg/ffmpeg/types.js','/vendor/ffmpeg/ffmpeg/worker.js',
+ '/vendor/ffmpeg/core/ffmpeg-core.js','/vendor/ffmpeg/core/ffmpeg-core.wasm',
  '/icons/git.svg','/icons/sun.svg','/icons/moon.svg','/icons/android/icon-192.png','/icons/android/icon-512.png','/icons/apple/AppIcon-180.png'
 ]);
-const types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.webmanifest':'application/manifest+json; charset=utf-8','.svg':'image/svg+xml','.png':'image/png'};
+const vendorFiles=new Map([
+ ...['index.js','classes.js','const.js','errors.js','utils.js','types.js','worker.js'].map(file=>[`/vendor/ffmpeg/ffmpeg/${file}`,path.join(root,'node_modules','@ffmpeg','ffmpeg','dist','esm',file)]),
+ ['/vendor/ffmpeg/core/ffmpeg-core.js',path.join(root,'node_modules','@ffmpeg','core','dist','esm','ffmpeg-core.js')]
+]);
+const wasmPath='/vendor/ffmpeg/core/ffmpeg-core.wasm';
+const wasmPartPaths=[
+ path.join(root,'vendor','ffmpeg','core','ffmpeg-core.wasm.part-001'),
+ path.join(root,'vendor','ffmpeg','core','ffmpeg-core.wasm.part-002')
+];
+const types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.txt':'text/plain; charset=utf-8','.webmanifest':'application/manifest+json; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.wasm':'application/wasm'};
 
 function send(response,status,payload){
  response.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'});
@@ -94,10 +105,22 @@ async function serveStatic(pathname,response){
  let decoded;try{decoded=decodeURIComponent(pathname)}catch{response.writeHead(400).end('Bad request');return}
  const relative=decoded==='/'?'/library.html':decoded;
  if(!publicFiles.has(relative)){response.writeHead(404,{'content-type':'text/plain; charset=utf-8','x-content-type-options':'nosniff'}).end('Not found');return}
- const target=path.resolve(root,`.${relative}`);
+ const target=vendorFiles.get(relative)||path.resolve(root,`.${relative}`);
  if(target!==root&&!target.startsWith(root+path.sep)){response.writeHead(403).end('Forbidden');return}
- let file;try{file=await import('node:fs/promises').then(fs=>fs.readFile(target))}catch{response.writeHead(404,{'content-type':'text/plain; charset=utf-8'}).end('Not found');return}
- response.writeHead(200,{'content-type':types[path.extname(target)]||'application/octet-stream','x-content-type-options':'nosniff','referrer-policy':'no-referrer','content-security-policy':"default-src 'self' data: blob:; img-src 'self' https: data:; media-src 'self' https: blob:; frame-src https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"});
+ let file;
+ try{
+  const fs=await import('node:fs/promises');
+  if(relative===wasmPath){
+   file=Buffer.concat(await Promise.all(wasmPartPaths.map(partPath=>fs.readFile(partPath))));
+  }else file=await fs.readFile(target);
+ }catch(error){
+  const missing=error.code==='ENOENT';
+  const incomplete=relative===wasmPath&&missing;
+  console.error(`Could not serve static asset ${relative}:`,error);
+  response.writeHead(missing?404:500,{'content-type':'text/plain; charset=utf-8'}).end(incomplete?'Split FFmpeg WebAssembly files are missing or incomplete.':missing?'Not found':'Could not load static asset');
+  return;
+ }
+ response.writeHead(200,{'content-type':types[path.extname(target)]||'application/octet-stream','x-content-type-options':'nosniff','referrer-policy':'no-referrer','content-security-policy':"default-src 'self' data: blob:; img-src 'self' https: data:; media-src 'self' https: blob:; frame-src https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"});
  response.end(file);
 }
 

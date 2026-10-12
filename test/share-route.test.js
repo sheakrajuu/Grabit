@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+import {readFile} from 'node:fs/promises';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
 import {once} from 'node:events';
@@ -49,6 +51,33 @@ test('serves the content-type filter module to the application',async t=>{
  assert.equal(response.status,200);
  assert.match(response.headers.get('content-type'),/javascript/);
  assert.match(await response.text(),/matchesContentType/);
+});
+
+test('serves the local video converter and its WebAssembly assets',async t=>{
+ const baseUrl=await startServer(t);
+ for(const file of ['video-transcoder.js']){
+  const response=await fetch(`${baseUrl}/js/${file}`);
+  assert.equal(response.status,200);
+  assert.match(response.headers.get('content-type'),/javascript/);
+  assert.match(await response.text(),/transcodeForBrowser/);
+ }
+ const worker=await fetch(`${baseUrl}/vendor/ffmpeg/ffmpeg/worker.js`);
+ assert.equal(worker.status,200);
+ assert.match(worker.headers.get('content-type'),/javascript/);
+ const core=await fetch(`${baseUrl}/vendor/ffmpeg/core/ffmpeg-core.wasm`,{method:'HEAD'});
+ assert.equal(core.status,200);
+ assert.match(core.headers.get('content-type'),/application\/wasm/);
+ const coreBytes=await fetch(`${baseUrl}/vendor/ffmpeg/core/ffmpeg-core.wasm`);
+ assert.equal(coreBytes.status,200);
+ const hash=createHash('sha256').update(Buffer.from(await coreBytes.arrayBuffer())).digest('hex');
+ assert.equal(hash,'9f57947a5bd530d8f00c5b3f2cb2a3492faa7e5d823315342d6a8656d0a6b7b7');
+ const coreModule=await fetch(`${baseUrl}/vendor/ffmpeg/core/ffmpeg-core.js`);
+ assert.equal(coreModule.status,200);
+ assert.match(coreModule.headers.get('content-type'),/javascript/);
+ assert.match(await coreModule.text(),/createFFmpegCore/);
+ const notice=await fetch(`${baseUrl}/THIRD-PARTY-NOTICES.txt`);
+ assert.equal(notice.status,200);
+ assert.match(await notice.text(),/GPL-2\.0-or-later/);
 });
 
 test('share routes accept and return opaque ciphertext only, then consume it',async t=>{

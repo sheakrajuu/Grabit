@@ -42,3 +42,13 @@ test('skips duplicate IDs and invalid media URLs',()=>{
  assert.equal(result.validItems,1);
  assert.equal(result.skippedItems,2);
 });
+
+test('preserves browser-converted video data while validating its media type',()=>{
+ const backup={format:'grabit-library',version:1,sections:[],items:[
+  {id:'converted-video',type:'video',title:'Converted',sectionIds:[],media:[{type:'video',storedDataUrl:'data:video/x-matroska;base64,AA==',convertedDataUrl:'data:video/mp4;base64,AQ=='}]},
+  {id:'invalid-conversion',type:'image',title:'Invalid conversion',sectionIds:[],media:[{type:'image',convertedDataUrl:'data:video/mp4;base64,AQ=='}]}
+ ]};
+ const result=inspectLibraryBackup(backup);
+ assert.deepEqual(result.data.items,[backup.items[0]]);
+ assert.equal(result.skippedItems,1);
+});

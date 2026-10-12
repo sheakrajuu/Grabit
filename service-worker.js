@@ -1,16 +1,17 @@
-const CACHE_NAME='grabit-shell-v72';
+const CACHE_NAME='grabit-shell-v76';
 const APP_SHELL=[
  './',
  './library.html',
  './manifest.webmanifest',
- './css/styles.css?v=49',
- './js/app.js?v=70',
+ './css/styles.css?v=54',
+ './js/app.js?v=77',
  './js/library-filter.js',
  './js/backup.js',
  './js/importer.js',
  './js/share.js',
  './js/storage.js',
  './js/utils.js',
+ './js/video-transcoder.js',
  './icons/git.svg',
  './icons/sun.svg',
  './icons/moon.svg',
@@ -43,7 +44,7 @@ self.addEventListener('fetch',event=>{
   }).catch(()=>caches.match('./library.html')));
   return;
  }
- const appShellAsset=/\/(?:library\.html|manifest\.webmanifest|css\/styles\.css|js\/(?:app|importer|share|storage|utils)\.js|icons\/(?:git|sun|moon)\.svg|icons\/(?:android\/icon-(?:192|512)\.png|apple\/AppIcon-180\.png))$/.test(url.pathname);
+ const appShellAsset=/\/(?:library\.html|manifest\.webmanifest|css\/styles\.css|js\/(?:app|importer|share|storage|utils|video-transcoder)\.js|vendor\/ffmpeg\/ffmpeg\/[^/]+\.js|icons\/(?:git|sun|moon)\.svg|icons\/(?:android\/icon-(?:192|512)\.png|apple\/AppIcon-180\.png))$/.test(url.pathname);
  if(appShellAsset){
   event.respondWith(fetch(request).then(response=>{
    if(response.ok&&response.type==='basic'){const copy=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put(request,copy))}

@@ -238,6 +238,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
 .row.between{justify-content:space-between}
 .hint{font-size:11px;color:var(--mu);margin:6px 0 0}
+.local-video-error{margin-top:10px;padding:10px 12px;border:1px solid var(--br);border-radius:10px;background:var(--panel)}
+.local-video-error .row{margin-top:8px}
 .checklist{display:flex;gap:7px;align-items:center;margin:8px 0;color:var(--tx);font-size:12px}
 .checklist input{accent-color:var(--ac)}
 .media-list{display:flex;gap:8px;flex-direction:column}

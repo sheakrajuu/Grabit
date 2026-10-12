@@ -1,6 +1,7 @@
 import {$,esc,uid,host,validUrl,normalized,classify,fallbackThumbnail,socialMediaEmbed,videoCollectionTitle} from './utils.js';
 import {openDB,migrateLegacy,loadLibrary,storeItem as persistItem,storeSection as persistSection,removeItem as deleteStoredItem,removeSection as deleteStoredSection} from './storage.js';
 import {previewUrl,discoverPlaylistUrl,resolveVideoUrl,videoDownloadUrl} from './importer.js';
+import {isVideoFile,videoFile} from './video-transcoder.js';
 import {consumeShortLibraryShareLink,createItemShareData,createItemsShareData,createShortLibraryShareLink,hasLibraryShareLink,isShortLibraryShareLink,readLibraryShareLink} from './share.js';
 import {inspectLibraryBackup} from './backup.js';
 import {matchesContentType} from './library-filter.js';
@@ -9,7 +10,8 @@ import {matchesContentType} from './library-filter.js';
 const V={view:'inbox',sectionId:null,q:'',type:'all',sort:'recent',filterSectionId:'',libraryPage:0,selectMode:false,selected:new Set(),mediaIndex:-1,dialogItemId:null,dialogMode:'view',editReturnToViewer:false,dialogReturnFocus:null,items:[],sections:[],downloads:[],downloadPreview:null,downloadFilter:'all',downloadError:'',downloadUrl:'',installPrompt:null,preview:null,previewRequestId:0,showingHiddenMedia:false,watch:null,watchScrollTimer:null,watchResizeObserver:null,shareData:null,pendingBackup:null,pendingShareLink:'',task:null,undo:null};
 const LIBRARY_PAGE_SIZE=60;
 const UNDO_WINDOW_MS=8000;
-const MAX_VIDEO_UPLOAD_BYTES=50*1024*1024;
+const VIDEO_EXTENSION_BY_MIME={'video/mp4':'mp4','video/quicktime':'mov','video/webm':'webm','video/ogg':'ogv','video/x-matroska':'mkv','video/x-msvideo':'avi','video/x-ms-wmv':'wmv','video/x-flv':'flv','video/mpeg':'mpeg','video/mp2t':'ts','video/dvd':'vob','video/x-ms-asf':'asf','video/3gpp':'3gp','video/3gpp2':'3g2'};
+const localMediaUrls=new Map();
 let appUpdatePending=false;
 let reloadingForAppUpdate=false;
 const icon=d=>`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
@@ -64,7 +66,7 @@ async function storeSection(section){clearUndo();return persistSection(section)}
 async function removeItem(id){clearUndo();return deleteStoredItem(id)}
 async function removeSection(id){clearUndo();return deleteStoredSection(id)}
 function applyTheme(theme,persist=false){const selected=theme==='light'?'light':'dark';document.documentElement.dataset.theme=selected;const button=$('#themeToggle');const icon=document.createElement('img');icon.src=`./icons/${selected==='light'?'moon':'sun'}.svg`;icon.alt='';button.replaceChildren(icon);button.title=`Switch to ${selected==='light'?'dark':'light'} theme`;button.setAttribute('aria-label',button.title);const themeColor=document.querySelector('meta[name="theme-color"]');if(themeColor)themeColor.content=selected==='light'?'#eef2f7':'#0b0b0c';if(persist){try{localStorage.setItem('grabit-theme',selected)}catch(error){reportError('Could not remember theme preference',error)}}}
-async function refreshLibrary(){const data=await loadLibrary();V.items=data.items;V.sections=data.sections}
+async function refreshLibrary(){const data=await loadLibrary();for(const url of localMediaUrls.values())URL.revokeObjectURL(url);localMediaUrls.clear();V.items=data.items;V.sections=data.sections}
 function loadDownloadHistory(){try{const stored=JSON.parse(localStorage.getItem('grabit-download-history')||'[]');V.downloads=Array.isArray(stored)?stored.filter(entry=>entry&&typeof entry==='object'&&(typeof entry.url==='string'||typeof entry.localMediaId==='string')).slice(0,200):[]}catch(error){console.warn('Could not read download history:',error);V.downloads=[]}}
 function storeDownloadHistory(){try{localStorage.setItem('grabit-download-history',JSON.stringify(V.downloads.slice(0,200)))}catch(error){reportError('Could not save download history',error)}}
 function show(html,wide=false){closeFilterDropdowns();if(!$('#md').classList.contains('on'))V.dialogReturnFocus=document.activeElement;$('#bx').innerHTML=html;$('#bx').classList.toggle('wide',wide);$('#md').classList.remove('image-view-mode');$('#md').classList.add('on');$('#bx').querySelector('h2')?.setAttribute('id','dialog-title');if($('#bx h2'))$('#bx').setAttribute('aria-labelledby','dialog-title');else $('#bx').removeAttribute('aria-labelledby');const focus=$('#bx input:not([type="hidden"]),#bx textarea,#bx select,#bx button');(focus||$('#bx')).focus()}
@@ -204,7 +206,6 @@ function render(){
  main.innerHTML=toolbar+(items.length?`<div class="grid">${visibleItems.map(card).join('')}</div>${pagination}`:`<div class="empty">${V.q?`No results for “${esc(V.q)}”.`:esc(emptyMessage)}${filterActive?'<p><button class="b" data-clear-filters>Clear filters</button></p>':''}</div>`);
 }
 function imageFile(file){return new Promise((resolve,reject)=>{if(!file||!file.type.startsWith('image/')){reject(new Error('Choose a valid image file.'));return}if(file.size>12*1024*1024){reject(new Error('Images must be smaller than 12 MB for local storage.'));return}const reader=new FileReader();reader.onerror=()=>reject(new Error('Could not read the selected image.'));reader.onload=()=>{const image=new Image();image.onerror=()=>reject(new Error('The selected file is not a readable image.'));image.onload=()=>{const scale=Math.min(1,1600/Math.max(image.width,image.height)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.width*scale));canvas.height=Math.max(1,Math.round(image.height*scale));const ctx=canvas.getContext('2d');if(!ctx){reject(new Error('Image processing is unavailable.'));return}ctx.drawImage(image,0,0,canvas.width,canvas.height);resolve({data:canvas.toDataURL('image/jpeg',.84),width:canvas.width,height:canvas.height})};image.src=reader.result};reader.readAsDataURL(file)})}
-function videoFile(file){return new Promise((resolve,reject)=>{if(!file?.type.startsWith('video/')){reject(new Error('Choose a valid video file.'));return}if(file.size>MAX_VIDEO_UPLOAD_BYTES){reject(new Error('Videos must be 50 MB or smaller.'));return}const reader=new FileReader();reader.onerror=()=>reject(new Error('Could not read the selected video.'));reader.onload=()=>resolve({data:reader.result,mimeType:file.type,size:file.size});reader.readAsDataURL(file)})}
 function emptyItem({type,title,sourceUrl='',media=[],thumbnailUrl='',notes='',description='',sectionIds=[]}){
  const now=new Date().toISOString();return{id:uid(),type,title:title.trim()||host(sourceUrl)||'Untitled',description,notes,sourceUrl,originalUrl:sourceUrl,canonicalUrl:normalized(sourceUrl),sourceDomain:host(sourceUrl),thumbnailUrl,media:media.map((m,position)=>({...m,id:m.id||uid(),position})),sectionIds,isFavorite:false,isArchived:false,inbox:sectionIds.length===0,savedAt:now,updatedAt:now};
 }
@@ -340,7 +341,7 @@ function noteDialog(){
 }
 function uploadDialog(droppedFiles=[]){
  V.droppedFiles=droppedFiles;
- show(`<b>Add media</b><p class="hint">Images are compressed; videos up to 50 MB each are saved in this browser. Available storage depends on your browser and device.</p>${V.droppedFiles?.length?`<p>${V.droppedFiles.length} ${V.droppedFiles.length===1?'file is':'files are'} ready to add.</p>`:''}<label for="imageFiles">Choose images or videos</label><input class="in" id="imageFiles" type="file" accept="image/*,video/*" multiple><label>Save to</label>${destinationOptions()}<div class="row"><button class="b p" data-action="saveImages">Add media</button><button class="b" data-action="close">Cancel</button></div>`);
+ show(`<b>Add media</b><p class="hint">Images are compressed; videos up to 100 MB each are saved on this device. Unsupported video codecs can be converted locally; the original stays private. Conversion uses extra device resources and may not work for every file.</p>${V.droppedFiles?.length?`<p>${V.droppedFiles.length} ${V.droppedFiles.length===1?'file is':'files are'} ready to add.</p>`:''}<label for="imageFiles">Choose images or videos</label><input class="in" id="imageFiles" type="file" accept="image/*,video/*,.mkv,.avi,.wmv,.flv,.mpeg,.mpg,.mts,.m2ts,.ts,.vob,.asf,.3gp,.3g2" multiple><label>Save to</label>${destinationOptions()}<div class="row"><button class="b p" data-action="saveImages">Add media</button><button class="b" data-action="close">Cancel</button></div>`);
 }
 function createSection(){show(`<b>New section</b><label for="newSectionName">Name</label><input class="in" id="newSectionName" maxlength="100" placeholder="e.g. Design ideas"><div class="row"><button class="b p" data-action="createSection">Create section</button><button class="b" data-action="close">Cancel</button></div>`)}
 async function saveNewSection(){
@@ -364,7 +365,9 @@ function startWatch(id){
  syncWatchUrl(!existing);renderWatchPage(true);
 }
 function orderedMedia(item){return(item.media||[]).slice().sort((a,b)=>(a.position||0)-(b.position||0))}
-function mediaSource(media){return media.storedDataUrl||media.playbackUrl||media.sourceUrl||''}
+function mediaSource(media){const blob=media.convertedBlob instanceof Blob?media.convertedBlob:media.storedBlob instanceof Blob?media.storedBlob:null;if(blob){let url=localMediaUrls.get(blob);if(!url){url=URL.createObjectURL(blob);localMediaUrls.set(blob,url)}return url}return media.convertedDataUrl||media.storedDataUrl||media.playbackUrl||media.sourceUrl||''}
+function localVideoAttributes(item,media){if(!media){media=item;item=V.items.find(entry=>entry.media?.some(candidate=>candidate.id===media.id))}const isLocal=media?.type==='video'&&(media.storedBlob instanceof Blob||media.convertedBlob instanceof Blob||media.storedDataUrl?.startsWith('data:video/')||media.convertedDataUrl?.startsWith('data:video/'));return isLocal?`data-local-video="true" data-video-item="${esc(item?.id||'')}" data-video-media="${esc(media.id)}"${media.convertedBlob instanceof Blob||media.convertedDataUrl?' data-video-converted="true"':''}`:''}
+function originalVideoBlob(media){if(media.storedBlob instanceof Blob)return media.storedBlob;if(media.storedDataUrl?.startsWith('data:video/'))return fetch(media.storedDataUrl).then(response=>response.blob());return null}
 function viewerMedia(item){return orderedMedia(item)}
 function sourcePages(item){
  if(Array.isArray(item.sourcePages)&&item.sourcePages.length)return item.sourcePages.map((page,index)=>({...page,index,media:Array.isArray(page.media)?page.media:item.media.filter(media=>(media.pageIndex||0)===index)}));
@@ -387,21 +390,22 @@ function defaultThumbnail(item){
 function downloadUrl(media){return media.downloadUrl||(!media.providerUrl&&!media.embedUrl?(media.playbackUrl||media.sourceUrl):'')}
 function downloadButton(item,media,label='Download',className='b media-download-button',role=''){
  const url=downloadUrl(media);
- const target=url?`data-download-url="${esc(url)}"`:media.storedDataUrl?`data-download-local="${esc(media.id)}"`:'';
+ const target=url?`data-download-url="${esc(url)}"`:media.storedDataUrl||media.storedBlob instanceof Blob?`data-download-local="${esc(media.id)}"`:'';
  const roleAttribute=role?` role="${role}"`:'';
  const providerUrl=media.type==='video'&&(media.providerUrl||media.embedUrl)?`data-download-video="${esc(media.providerUrl||media.sourceUrl||media.url)}"`:'';
  return target||providerUrl?`<button class="${className}"${roleAttribute} ${providerUrl||target} data-download-title="${esc(item.title)}" data-download-type="${esc(media.type)}" data-download-thumb="${esc(media.thumbnailUrl||'')}" data-download-item="${esc(item.id)}">${label}</button>`:`<button class="${className}"${roleAttribute} disabled title="This provider embed does not expose a downloadable media file.">${label} unavailable</button>`;
 }
-async function downloadMedia(url,{itemId='',title='Media',type='image',thumbnailUrl='',ytDlp=false,formatId=''}={}){
+function mediaExtension(mimeType,type){const subtype=mimeType?.toLowerCase().split('/')[1]||'';return VIDEO_EXTENSION_BY_MIME[mimeType?.toLowerCase()]||(type==='video'&&/^[\w.+-]+$/.test(subtype)?subtype.replace(/^x-/,''):type==='video'?'mp4':'jpg')}
+async function downloadMedia(url,{itemId='',localMediaId='',title='Media',type='image',thumbnailUrl='',ytDlp=false,formatId=''}={}){
  if(!url){toast('This media has no downloadable source URL.');return}
  try{
-  const local=url.startsWith('data:')||url.startsWith('blob:');
+  const blobSource=url instanceof Blob,local=blobSource||typeof url==='string'&&(url.startsWith('data:')||url.startsWith('blob:'));
   const anchor=document.createElement('a');let filename='';
   if(local){
-   const blob=await(await fetch(url)).blob();
+   const blob=blobSource?url:await(await fetch(url)).blob();
    if(!blob.size)throw new Error('The downloaded media file is empty.');
    const objectUrl=URL.createObjectURL(blob);
-   filename=`${title.replace(/[<>:"/\\|?*\u0000-\u001f]/g,'_')||'media'}.${type==='video'?'mp4':'jpg'}`;
+   filename=`${title.replace(/[<>:"/\\|?*\u0000-\u001f]/g,'_')||'media'}.${mediaExtension(blob.type,type)}`;
    anchor.href=objectUrl;anchor.download=filename;setTimeout(()=>URL.revokeObjectURL(objectUrl),60_000);
   }else{
    anchor.href=ytDlp?videoDownloadUrl(url,title,formatId):`/api/download?url=${encodeURIComponent(url)}`;
@@ -410,7 +414,7 @@ async function downloadMedia(url,{itemId='',title='Media',type='image',thumbnail
    filename=ytDlp?title||'video':host(url)||title||'media';
   }
   document.body.append(anchor);anchor.click();anchor.remove();
-  V.downloads.unshift({itemId,url,title,type,thumbnailUrl,filename,ytDlp,formatId,downloadedAt:new Date().toISOString()});V.downloads=V.downloads.slice(0,200);storeDownloadHistory();renderNav();toast(`Download started: ${filename}`);
+  V.downloads.unshift({itemId,url:typeof url==='string'?url:'',localMediaId:localMediaId||(blobSource?'local':'')||undefined,title,type,thumbnailUrl,filename,ytDlp,formatId,downloadedAt:new Date().toISOString()});V.downloads=V.downloads.slice(0,200);storeDownloadHistory();renderNav();toast(`Download started: ${filename}`);
  }catch(error){console.error('Media download failed:',error);toast('Could not download this media. Try again or open the original link.')}
 }
 function renderDownloadHistory(){
@@ -644,7 +648,7 @@ async function changePlaylistBatch(item,page,start){
 function watchMediaTile(item,media,index){
  const hidden=(item.hiddenMediaUrls||[]).includes(media.sourceUrl);
  const poster=media.thumbnailUrl|| (media.type==='image'?media.sourceUrl:fallbackThumbnail('video'));
- const visual=hidden?`<span class="hidden-media-placeholder" aria-hidden="true">${media.type==='video'?'Hidden video':'Hidden image'}</span>`:media.embedUrl&&!media.playbackUrl?`<img src="${esc(poster)}" alt="" loading="lazy"><span class="play-mark" aria-hidden="true">${media.type==='video'?'▶':'↗'}</span>`:media.type==='video'?`<video src="${esc(mediaSource(media))}" poster="${esc(poster)}" muted playsinline preload="none" tabindex="-1"></video><span class="play-mark" aria-hidden="true">▶</span>`:`<img src="${esc(mediaSource(media))}" alt="${esc(media.alt||item.title)}" loading="lazy" decoding="async">`;
+ const visual=hidden?`<span class="hidden-media-placeholder" aria-hidden="true">${media.type==='video'?'Hidden video':'Hidden image'}</span>`:media.embedUrl&&!media.playbackUrl?`<img src="${esc(poster)}" alt="" loading="lazy"><span class="play-mark" aria-hidden="true">${media.type==='video'?'▶':'↗'}</span>`:media.type==='video'?`<video ${localVideoAttributes(item,media)} src="${esc(mediaSource(media))}" poster="${esc(poster)}" muted playsinline preload="none" tabindex="-1"></video><span class="play-mark" aria-hidden="true">▶</span>`:`<img src="${esc(mediaSource(media))}" alt="${esc(media.alt||item.title)}" loading="lazy" decoding="async">`;
  const ratio=media.width&&media.height?Number(media.height)/Number(media.width):media.type==='video'?0.75:1;
  return`<div class="watch-tile-wrap${hidden?' hidden-media':''}" data-ratio="${Number.isFinite(ratio)&&ratio>0?ratio:1}"><button class="watch-tile" data-watch-media="${index}" aria-label="${hidden?`Hidden ${media.type} ${index+1}`:`Open ${media.type} ${index+1}`}"${hidden?' disabled':''}>${visual}</button><button class="watch-actions-toggle" data-watch-menu aria-label="Show media actions" aria-haspopup="menu" aria-expanded="false">${icon(icons.more)}</button><div class="watch-actions-menu" role="menu"><button class="watch-hide-button" role="menuitem" data-watch-hide="${esc(media.sourceUrl)}">${icon(icons.hide)}<span>${hidden?`Unhide ${media.type}`:`Hide ${media.type}`}</span></button>${hidden?'':downloadButton(item,media,`${icon(icons.download)}<span>Download</span>`,'watch-download-button media-download-button','menuitem')}</div></div>`;
 }
@@ -686,7 +690,7 @@ function renderWatchPage(pushScroll=false,message=''){
  const navigation=`<header class="watch-header"><button class="b watch-back-button" data-watch-action="${backAction}" aria-label="Back to ${backTarget}"><svg class="watch-back-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg><span>${active&&hasGallery?'Gallery':'Library'}</span></button><div class="watch-heading"><strong>${esc(item.title)}</strong><span>${pages.length>1?`URL ${watch.pageIndex+1} of ${pages.length} · `:''}${esc(pageTitle)}</span></div>${controls}</header>`;
  let content='';
  if(message)content=`<div class="watch-message">${esc(message)}${item.sourceUrl?`<p><a href="${esc(item.sourceUrl)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p>`:''}<button class="b" data-watch-action="retry">Retry</button></div>`;
- else if(active&&!shouldShowGallery)content=`<div class="watch-stage" data-swipe><button class="b watch-arrow previous" data-watch-action="previousMedia" aria-label="Previous photo"${watch.mediaIndex===0?' disabled':''}>‹</button><div class="watch-stage-content">${activeHidden?`<span class="hidden-media-placeholder">${active.type==='video'?'Hidden video':'Hidden image'}</span>`:active.type==='video'&&active.playbackUrl?`<video data-watch-playback controls autoplay playsinline preload="metadata" poster="${esc(active.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(active))}">Video playback is unavailable in this browser.</video>`:active.embedUrl?`<iframe src="${esc(active.embedUrl)}" title="${esc(active.alt||pageTitle)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`:active.type==='video'?`<video controls autoplay playsinline preload="metadata" poster="${esc(active.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(active))}">Video playback is unavailable in this browser.</video>`:`<img class="watch-active-image${watch.mediaDirection==='next'?' slide-from-right':watch.mediaDirection==='previous'?' slide-from-left':''}" src="${esc(mediaSource(active))}" alt="${esc(active.alt||pageTitle)}">`}</div><button class="b watch-arrow next" data-watch-action="nextMedia" aria-label="Next photo"${watch.mediaIndex===media.length-1?' disabled':''}>›</button></div><div class="watch-stage-caption"><span>${watch.mediaIndex+1} / ${media.length}</span>${activeHidden?`<button class="b" data-watch-hide="${esc(active.sourceUrl)}">Unhide ${active.type}</button>`:active.type==='image'?'':`${downloadButton(item,active)}${active.type==='video'&&(active.providerUrl||active.embedUrl)?`<button class="b" data-watch-action="resolveVideo">Try native player</button>`:''}<button class="b" data-watch-hide="${esc(active.sourceUrl)}">Hide ${active.type}</button>`}</div>`;
+ else if(active&&!shouldShowGallery)content=`<div class="watch-stage" data-swipe><button class="b watch-arrow previous" data-watch-action="previousMedia" aria-label="Previous photo"${watch.mediaIndex===0?' disabled':''}>‹</button><div class="watch-stage-content">${activeHidden?`<span class="hidden-media-placeholder">${active.type==='video'?'Hidden video':'Hidden image'}</span>`:active.type==='video'&&active.playbackUrl?`<video data-watch-playback ${localVideoAttributes(active)} controls autoplay playsinline preload="metadata" poster="${esc(active.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(active))}">Video playback is unavailable in this browser.</video>`:active.embedUrl?`<iframe src="${esc(active.embedUrl)}" title="${esc(active.alt||pageTitle)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`:active.type==='video'?`<video ${localVideoAttributes(active)} controls autoplay playsinline preload="metadata" poster="${esc(active.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(active))}">Video playback is unavailable in this browser.</video>`:`<img class="watch-active-image${watch.mediaDirection==='next'?' slide-from-right':watch.mediaDirection==='previous'?' slide-from-left':''}" src="${esc(mediaSource(active))}" alt="${esc(active.alt||pageTitle)}">`}</div><button class="b watch-arrow next" data-watch-action="nextMedia" aria-label="Next photo"${watch.mediaIndex===media.length-1?' disabled':''}>›</button></div><div class="watch-stage-caption"><span>${watch.mediaIndex+1} / ${media.length}</span>${activeHidden?`<button class="b" data-watch-hide="${esc(active.sourceUrl)}">Unhide ${active.type}</button>`:active.type==='image'?'':`${downloadButton(item,active)}${active.type==='video'&&(active.providerUrl||active.embedUrl)?`<button class="b" data-watch-action="resolveVideo">Try native player</button>`:''}<button class="b" data-watch-hide="${esc(active.sourceUrl)}">Hide ${active.type}</button>`}</div>`;
  else if(page.error&&!media.length)content=`<div class="watch-message">Could not load this URL: ${esc(page.error)}<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p><button class="b p" data-watch-action="resolveSourceVideo">Find and play video</button><button class="b" data-watch-action="retry">Retry</button></div>`;
  else if(media.length)content=`<div class="watch-page-info"><span>${esc(pageTitle)} · ${watch.showingHidden?`${hiddenMedia.length} hidden items`:`${feedMedia.length} items`}</span>${page.url?`<a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original</a>`:''}${!hasGallery&&!media.some(entry=>entry.type==='video')&&page.url?'<button class="b" data-watch-action="resolveSourceVideo">Find videos</button>':''}${hiddenMedia.length||watch.showingHidden?`<button class="watch-hidden-toggle" data-watch-action="${watch.showingHidden?'showGalleryFeed':'showHiddenMedia'}">${watch.showingHidden?'Back to gallery':`Hidden items (${hiddenMedia.length})`}</button>`:''}</div>${item.type==='playlist'?'':[page.mediaWarning,page.previewWarning,page.truncated?'Only the first 500 media items are shown.':''].filter(Boolean).map(warning=>`<p class="hint" role="status">${esc(warning)}</p>`).join('')}${displayedMedia.length?`<div class="watch-grid">${displayedMedia.map(({entry,index})=>watchMediaTile(item,entry,index)).join('')}</div>`:`<div class="watch-message">${watch.showingHidden?'There are no hidden media on this URL.':'No visible media. Open Hidden items to manage them.'}</div>`}`;
  else content=`<div class="watch-message">${esc(message||'No images or videos were found on this page.')}${page.url?`<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p><button class="b p" data-watch-action="resolveSourceVideo">Find and play video</button>`:''}</div>`;
@@ -715,11 +719,11 @@ function mediaTile(item,media,index){
  const source=mediaSource(media),hidden=(item.hiddenMediaUrls||[]).includes(media.sourceUrl);const visual=hidden
   ?`<span class="hidden-media-placeholder" aria-hidden="true">${media.type==='video'?'Hidden video':'Hidden image'}</span>`
   :media.type==='video'
-  ?media.embedUrl?`<img src="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" alt="" loading="lazy" decoding="async"><span class="play-mark" aria-hidden="true">▶</span>`:`<video src="${esc(source)}" poster="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" muted playsinline preload="none" tabindex="-1"></video><span class="play-mark" aria-hidden="true">▶</span>`
+   ?media.embedUrl?`<img src="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" alt="" loading="lazy" decoding="async"><span class="play-mark" aria-hidden="true">▶</span>`:`<video ${localVideoAttributes(media)} src="${esc(source)}" poster="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" muted playsinline preload="none" tabindex="-1"></video><span class="play-mark" aria-hidden="true">▶</span>`
   :media.embedUrl?`<img src="${esc(media.thumbnailUrl||fallbackThumbnail('social'))}" alt="" loading="lazy" decoding="async"><span class="play-mark" aria-hidden="true">↗</span>`:`<img src="${esc(source)}" alt="${esc(item.title)} — image ${index+1}" loading="lazy" decoding="async">`;
  return `<div class="media-tile ${media.type==='video'?'video-tile':''}${hidden?' hidden':''}">
  <button class="media-open" data-action="openMedia" data-index="${index}" aria-label="${hidden?`Hidden ${media.type} ${index+1} of ${item.media.length}`:`Open ${media.type} ${index+1} of ${item.media.length}`}"${hidden?' disabled':''}>${visual}<span class="media-number">${index+1}</span></button>
- ${!hidden&&downloadUrl(media)?downloadButton(item,media):''}
+ ${!hidden&&(downloadUrl(media)||media.storedBlob instanceof Blob||media.storedDataUrl)?downloadButton(item,media):''}
  <button class="media-menu-button" data-media-menu aria-label="Media options" aria-haspopup="menu" aria-expanded="false">${icon(icons.more)}</button>
  <div class="media-menu" role="menu"><button role="menuitem" data-media-visibility="${esc(media.sourceUrl)}">${hidden?`Unhide ${media.type}`:`Hide ${media.type}`}</button></div></div>`;
 }
@@ -735,13 +739,13 @@ function renderItemViewer(item){
  if(focused&&!shouldShowGallery){
   if(focusedHidden)display=`<div class="hidden-media-view"><span class="hidden-media-placeholder">${focused.type==='video'?'Hidden video':'Hidden image'}</span></div><div class="row"><button class="b" data-media-visibility="${esc(focused.sourceUrl)}">Unhide ${focused.type}</button>${media.length>1?'<button class="b" data-action="backToGallery">Back to gallery</button>':''}</div>`;
   else if(focused.type==='image'&&!focused.embedUrl){imageViewMode=true;display=libraryImageViewer(item,focused,V.mediaIndex,media.length,'backToGallery')}
-  else display=`<div class="focus-media">${focused.embedUrl?`<iframe src="${esc(focused.embedUrl)}" title="${esc(item.title)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen loading="lazy"></iframe>`:focused.type==='video'?`<video controls autoplay playsinline preload="metadata" poster="${esc(focused.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(focused))}">Video playback is unavailable in this browser.</video>`:`<img src="${esc(mediaSource(focused))}" alt="${esc(item.title)} — image ${V.mediaIndex+1}">`}</div><div class="bar media-navigation"><button class="b" data-action="mediaPrev" aria-label="Previous media">‹ Previous</button><span>${V.mediaIndex+1} / ${media.length}</span><button class="b" data-action="mediaNext" aria-label="Next media">Next ›</button></div><div class="row">${downloadButton(item,focused)}<button class="b" data-media-visibility="${esc(focused.sourceUrl)}">${(item.hiddenMediaUrls||[]).includes(focused.sourceUrl)?'Unhide':'Hide'} this media</button><button class="b" data-action="backToGallery">Back to ${item.type==='playlist'?'playlist':'gallery'}</button></div>`;
+  else display=`<div class="focus-media">${focused.embedUrl?`<iframe src="${esc(focused.embedUrl)}" title="${esc(item.title)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen loading="lazy"></iframe>`:focused.type==='video'?`<video ${localVideoAttributes(item,focused)} controls autoplay playsinline preload="metadata" poster="${esc(focused.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(focused))}">Video playback is unavailable in this browser.</video>`:`<img src="${esc(mediaSource(focused))}" alt="${esc(item.title)} — image ${V.mediaIndex+1}">`}</div><div class="bar media-navigation"><button class="b" data-action="mediaPrev" aria-label="Previous media">‹ Previous</button><span>${V.mediaIndex+1} / ${media.length}</span><button class="b" data-action="mediaNext" aria-label="Next media">Next ›</button></div><div class="row">${downloadButton(item,focused)}<button class="b" data-media-visibility="${esc(focused.sourceUrl)}">${(item.hiddenMediaUrls||[]).includes(focused.sourceUrl)?'Unhide':'Hide'} this media</button><button class="b" data-action="backToGallery">Back to ${item.type==='playlist'?'playlist':'gallery'}</button></div>`;
  }else if(shouldShowGallery||(!focused&&['gallery','playlist'].includes(item.type))){
   const hiddenUrls=new Set(item.hiddenMediaUrls||[]),galleryMedia=media.map((entry,index)=>({entry,index})).filter(({entry})=>hiddenUrls.has(entry.sourceUrl)===V.showingHiddenMedia);
   display=`${hiddenUrls.size||V.showingHiddenMedia?`<div class="row between"><span class="hint">${V.showingHiddenMedia?`${galleryMedia.length} hidden items`:`${media.length-galleryMedia.length} visible items`}</span><button class="watch-hidden-toggle" data-action="toggleHiddenList">${V.showingHiddenMedia?'Back to gallery':`Hidden items (${hiddenUrls.size})`}</button></div>`:''}<div class="media-grid">${galleryMedia.map(({entry,index})=>mediaTile(item,entry,index)).join('')||`<p class="hint">${V.showingHiddenMedia?'No hidden media in this gallery.':'No visible media in this gallery.'}</p>`}</div>`;
  }else if(item.type==='video'&&media[0]){
   const hidden=(item.hiddenMediaUrls||[]).includes(media[0].sourceUrl);
-  display=hidden?`<div class="hidden-media-view"><span class="hidden-media-placeholder">Hidden video</span></div><div class="row"><button class="b" data-media-visibility="${esc(media[0].sourceUrl)}">Unhide video</button></div>`:`<div class="focus-media">${media[0].embedUrl?`<iframe src="${esc(media[0].embedUrl)}" title="${esc(item.title)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`:`<video controls autoplay playsinline preload="metadata" poster="${esc(media[0].thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(media[0]))}">Video playback is unavailable in this browser.</video>`}</div><div class="row">${downloadButton(item,media[0])}<button class="b" data-media-visibility="${esc(media[0].sourceUrl)}">Hide this video</button></div>`;
+  display=hidden?`<div class="hidden-media-view"><span class="hidden-media-placeholder">Hidden video</span></div><div class="row"><button class="b" data-media-visibility="${esc(media[0].sourceUrl)}">Unhide video</button></div>`:`<div class="focus-media">${media[0].embedUrl?`<iframe src="${esc(media[0].embedUrl)}" title="${esc(item.title)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`:`<video ${localVideoAttributes(item,media[0])} controls autoplay playsinline preload="metadata" poster="${esc(media[0].thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(media[0]))}">Video playback is unavailable in this browser.</video>`}</div><div class="row">${downloadButton(item,media[0])}<button class="b" data-media-visibility="${esc(media[0].sourceUrl)}">Hide this video</button></div>`;
  }else if(item.type==='image'&&media[0]){
   if((item.hiddenMediaUrls||[]).includes(media[0].sourceUrl))display=`<div class="hidden-media-view"><span class="hidden-media-placeholder">Hidden image</span></div><div class="row"><button class="b" data-media-visibility="${esc(media[0].sourceUrl)}">Unhide image</button></div>`;
   else if(media[0].type==='image'&&!media[0].embedUrl){imageViewMode=true;display=libraryImageViewer(item,media[0],0,1,'close')}
@@ -881,9 +885,9 @@ async function saveImages(){
    if(file.type.startsWith('image/')){
     const image=await imageFile(file);taskCancelled(task);
     await storeItem(emptyItem({type:'image',title:file.name.replace(/\.[^.]+$/,''),media:[{type:'image',sourceUrl:'',storedDataUrl:image.data,width:image.width,height:image.height}],thumbnailUrl:image.data,sectionIds:sections}));
-   }else if(file.type.startsWith('video/')){
+   }else if(isVideoFile(file)){
     const video=await videoFile(file);taskCancelled(task);
-    await storeItem(emptyItem({type:'video',title:file.name.replace(/\.[^.]+$/,''),media:[{type:'video',sourceUrl:'',storedDataUrl:video.data,mimeType:video.mimeType,size:video.size,position:0}],thumbnailUrl:fallbackThumbnail('video'),sectionIds:sections}));
+    await storeItem(emptyItem({type:'video',title:file.name.replace(/\.[^.]+$/,''),media:[{type:'video',sourceUrl:'',storedBlob:video.blob,mimeType:video.mimeType,size:video.size,position:0}],thumbnailUrl:fallbackThumbnail('video'),sectionIds:sections}));
    }else throw new Error('Choose an image or video file.');
    count++;
   }
@@ -891,6 +895,37 @@ async function saveImages(){
   updateTask(task.controller.signal.aborted?'Stopping':'Adding media',++task.completed,files.length,task);
  }
  V.droppedFiles=[];await refreshLibrary();finishTask(task);hide();render();toast(`${countLabel(count,'file')} saved${task.controller.signal.aborted?' before stopping':''}${errors.length?`; ${countLabel(errors.length,'file')} could not be saved. Try a smaller file or check available storage.`:''}.`);if(errors.length)console.error('Media upload errors:',errors);
+}
+async function convertSavedVideo(itemId,mediaId){
+ const item=V.items.find(entry=>entry.id===itemId),media=item?.media.find(entry=>entry.id===mediaId);
+ if(!item||!media||media.type!=='video'){toast('This saved video is no longer available.');return}
+ if(media.convertedBlob instanceof Blob||media.convertedDataUrl){toast('A converted copy is already saved for this video.');return}
+ const task=startTask('Preparing on-device video conversion',0,'video-conversion');
+ try{
+  const original=await originalVideoBlob(media);
+  if(!original)throw new Error('The original local video file is unavailable.');
+  taskCancelled(task);
+  const {transcodeForBrowser}=await import('./video-transcoder.js');
+  const convertedBlob=await transcodeForBrowser(original,{
+   signal:task.controller.signal,
+   onStatus:status=>updateTask(status,0,0,task),
+   onProgress:progress=>updateTask(`Converting on this device (${Math.round(progress*100)}%)`,0,0,task)
+  });
+  taskCancelled(task);
+  const updated={...item,media:item.media.map(entry=>entry.id===mediaId?{...entry,convertedBlob,convertedMimeType:'video/mp4',convertedSize:convertedBlob.size}:entry),updatedAt:new Date().toISOString()};
+  await storeItem(updated);
+  await refreshLibrary();
+  finishTask(task);
+  if(V.watch?.itemId===itemId)renderWatchPage();
+  else if(V.dialogItemId===itemId)renderItemViewer(V.items.find(entry=>entry.id===itemId));
+  else render();
+  toast('A browser-compatible copy was saved on this device. The original video is unchanged.');
+ }catch(error){
+  finishTask(task);
+  if(error.name==='AbortError'){toast('Video conversion cancelled. The original remains saved.');return}
+  console.error('On-device video conversion failed:',error);
+  toast('Could not convert this video on this device. It may be damaged, protected, or use an unsupported codec; the original remains saved.');
+ }
 }
 async function saveDetail(id){
  const item=V.items.find(x=>x.id===id);if(!item)return;
@@ -944,12 +979,21 @@ async function bulk(action,confirmed=false){
   reportError('Could not update selected items',error)
  }
 }
-function downloadJson(){
- const data=libraryExportData();
- const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`grabit-library-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Library export downloaded.');
+function blobAsDataUrl(blob){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onerror=()=>reject(new Error('Could not prepare uploaded media for export.'));reader.onload=()=>typeof reader.result==='string'?resolve(reader.result):reject(new Error('Could not encode uploaded media for export.'));reader.readAsDataURL(blob)})}
+async function downloadJson(){
+ try{
+  const data=await libraryExportData();
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`grabit-library-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Library export downloaded.');
+ }catch(error){reportError('Could not export library',error)}
 }
-function libraryExportData(){
- return{format:'grabit-library',version:1,exportedAt:new Date().toISOString(),storage:'metadata and local image data only; external media files are referenced by URL',sections:V.sections,items:V.items.map(({tags,...item})=>item)};
+async function libraryExportData(){
+ const items=await Promise.all(V.items.map(async({tags,...item})=>({...item,media:await Promise.all((item.media||[]).map(async media=>{
+  const {storedBlob,convertedBlob,...exportMedia}=media;
+  if(storedBlob instanceof Blob){exportMedia.storedDataUrl=await blobAsDataUrl(storedBlob);exportMedia.mimeType=media.mimeType||storedBlob.type;exportMedia.size=media.size??storedBlob.size}
+  if(convertedBlob instanceof Blob)exportMedia.convertedDataUrl=await blobAsDataUrl(convertedBlob);
+  return exportMedia;
+ }))})));
+ return{format:'grabit-library',version:1,exportedAt:new Date().toISOString(),storage:'metadata and uploaded media data; external media files are referenced by URL',sections:V.sections,items};
 }
 function shareDialog(data,title,description){
  V.shareData=data;
@@ -959,15 +1003,15 @@ function exportDialog(){
  V.shareData=null;
  show(`<b>Export library</b><p class="hint">A JSON backup includes saved items, sections, and uploaded image/video data. External media is saved as links, not downloaded copies. JSON backups are unencrypted, so store them somewhere private. Importing a backup keeps existing items and skips duplicates.</p><div class="row"><button class="b p" data-action="createShareLink">Create encrypted one-time link</button><button class="b" data-action="downloadExport">Download JSON backup</button><button class="b" data-action="restoreDialog">Import…</button><button class="b" data-action="close">Close</button></div><div id="shareLinkOutput" hidden><label for="shareLinkValue">Encrypted share link</label><textarea class="in" id="shareLinkValue" rows="2" readonly></textarea><div class="row"><button class="b" data-action="copyShareLink">Copy link</button></div></div>`);
 }
-function shareItem(id){
+async function shareItem(id){
  const item=V.items.find(entry=>entry.id===id);if(!item)return;
- try{shareDialog(createItemShareData(libraryExportData(),id),`Share “${item.title||'Untitled'}”`,'Only this item will be included.');}
+ try{shareDialog(createItemShareData(await libraryExportData(),id),`Share “${item.title||'Untitled'}”`,'Only this item will be included.');}
  catch(error){reportError('Could not prepare this item for sharing',error)}
 }
-function shareSelectedItems(){
+async function shareSelectedItems(){
  const ids=[...V.selected];if(ids.length<2){toast('Select at least two items to share their contents.');return}
  try{
-  const data=createItemsShareData(libraryExportData(),ids);
+  const data=createItemsShareData(await libraryExportData(),ids);
   shareDialog(data,'Share selected contents',`${data.items.length} selected items will be included.`);
  }catch(error){reportError('Could not prepare selected items for sharing',error)}
 }
@@ -986,7 +1030,7 @@ async function createShareLink(){
  const button=$('[data-action="createShareLink"]');
  if(button){button.disabled=true;button.textContent='Preparing link…'}
  try{
-  const link=await createShortLibraryShareLink(V.shareData||libraryExportData(),location.href);
+  const link=await createShortLibraryShareLink(V.shareData||await libraryExportData(),location.href);
   const output=$('#shareLinkOutput'),field=$('#shareLinkValue');
   if(!output||!field)return;
   field.value=link;output.hidden=false;
@@ -1103,7 +1147,7 @@ $('#md').addEventListener('click',async e=>{
  else if(action==='confirmDeleteItem'){const item=V.items.find(entry=>entry.id===id);if(!item)return;const snapshot=structuredClone(item);try{await removeItem(id);await refreshLibrary();hide();render();saveUndo('Item deleted.',()=>storeItem(snapshot))}catch(err){reportError('Could not delete item',err)}}
  else if(action==='cancelDeleteItem'){detail(id)}
  else if(action==='mediaPrev'||action==='mediaNext'){const item=V.items.find(x=>x.id===V.dialogItemId);if(item){const length=viewerMedia(item).length;V.mediaIndex=(V.mediaIndex+(action==='mediaPrev'?-1:1)+length)%length;renderItemViewer(item)}}
- else if(action==='downloadExport')downloadJson();
+ else if(action==='downloadExport')await downloadJson();
  else if(action==='createShareLink')await createShareLink();
  else if(action==='copyShareLink')await copyShareLink();
  else if(action==='importShareLink')await importShareLink();
@@ -1154,13 +1198,13 @@ $('#main').addEventListener('click',async e=>{
  if(downloadButton){
   const actionMenu=downloadButton.closest('.watch-actions-menu');
   if(actionMenu){const tile=actionMenu.closest('.watch-tile-wrap');tile.classList.remove('show-actions');actionMenu.classList.remove('align-left');tile.querySelector('[data-watch-menu]')?.setAttribute('aria-expanded','false')}
-  const local=downloadButton.dataset.downloadLocal?V.items.find(item=>item.id===downloadButton.dataset.downloadItem)?.media.find(media=>media.id===downloadButton.dataset.downloadLocal)?.storedDataUrl:'';
-  await downloadMedia(downloadButton.dataset.downloadUrl||local,{itemId:downloadButton.dataset.downloadItem,title:downloadButton.dataset.downloadTitle,type:downloadButton.dataset.downloadType,thumbnailUrl:downloadButton.dataset.downloadThumb});return;
+  const localItem=downloadButton.dataset.downloadLocal?V.items.find(item=>item.id===downloadButton.dataset.downloadItem):null,localMedia=localItem?.media.find(media=>media.id===downloadButton.dataset.downloadLocal),local=localMedia?.storedBlob||localMedia?.storedDataUrl||'';
+  await downloadMedia(downloadButton.dataset.downloadUrl||local,{itemId:downloadButton.dataset.downloadItem,localMediaId:localMedia?.storedBlob instanceof Blob?localMedia.id:'',title:downloadButton.dataset.downloadTitle,type:downloadButton.dataset.downloadType,thumbnailUrl:downloadButton.dataset.downloadThumb});return;
  }
  const videoDownload=e.target.closest('[data-download-video]');
  if(videoDownload){await downloadMedia(videoDownload.dataset.downloadVideo,{itemId:videoDownload.dataset.downloadItem,title:videoDownload.dataset.downloadTitle,type:'video',thumbnailUrl:videoDownload.dataset.downloadThumb,ytDlp:true});return}
  const downloadHistory=e.target.closest('[data-download-history]');
- if(downloadHistory){const record=V.downloads[Number(downloadHistory.dataset.downloadHistory)];if(record)await downloadMedia(record.url,{itemId:record.itemId,title:record.title,type:record.type,thumbnailUrl:record.thumbnailUrl,ytDlp:record.ytDlp===true,formatId:record.formatId||''});return}
+ if(downloadHistory){const record=V.downloads[Number(downloadHistory.dataset.downloadHistory)];if(record){const media=record.localMediaId?V.items.find(item=>item.id===record.itemId)?.media.find(entry=>entry.id===record.localMediaId):null;if(record.localMediaId&&!media){toast('The original saved file is no longer available in this library.');return}await downloadMedia(media?.storedBlob||media?.storedDataUrl||record.url,{itemId:record.itemId,localMediaId:record.localMediaId,title:record.title,type:record.type,thumbnailUrl:record.thumbnailUrl,ytDlp:record.ytDlp===true,formatId:record.formatId||''})}return}
  if(e.target.closest('[data-clear-downloads]')){V.downloads=[];storeDownloadHistory();render();return}
  const watchButton=e.target.closest('[data-watch-action]');
  if(watchButton&&V.watch&&['previousPlaylistBatch','nextPlaylistBatch'].includes(watchButton.dataset.watchAction)){
@@ -1186,7 +1230,7 @@ $('#main').addEventListener('click',async e=>{
  const menuButton=e.target.closest('[data-card-menu]');if(menuButton){e.stopPropagation();const cardEl=menuButton.closest('.card'),menu=cardEl.querySelector('.card-menu'),open=!menu.classList.contains('open');closeCardMenus();if(open){menu.classList.add('open');cardEl.classList.add('menu-open');menuButton.setAttribute('aria-expanded','true');positionCardMenu(menu,menuButton);menu.querySelector('[role="menuitem"]')?.focus()}return}
  const cardAction=e.target.closest('[data-card-action]');if(cardAction){e.stopPropagation();const id=cardAction.dataset.id,action=cardAction.dataset.cardAction,item=V.items.find(entry=>entry.id===id);if(!item)return;
   const menu=cardAction.closest('.card-menu');if(menu){const trigger=menu.previousElementSibling;closeCardMenus();trigger?.focus()}
-  if(action==='share'){shareItem(id);return}
+  if(action==='share'){await shareItem(id);return}
   if(action==='moveSection'){moveItemToSectionDialog(id);return}
   if(action==='toggleInbox'){await toggleItemInboxVisibility(id);return}
   if(action==='edit'){editItem(id);return}
@@ -1196,7 +1240,7 @@ $('#main').addEventListener('click',async e=>{
  }
  if(e.target.closest('#selectMode')){V.selectMode=true;V.selected.clear();render();return}
  if(e.target.closest('[data-clear-filters]')){V.q='';V.type='all';V.filterSectionId='';V.libraryPage=0;$('#q').value='';render();return}
- const bulkButton=e.target.closest('[data-bulk]');if(bulkButton){const action=bulkButton.dataset.bulk;if(action==='done'){V.selectMode=false;V.selected.clear();render()}else if(action==='selectAll'){matchingItems().forEach(i=>V.selected.add(i.id));render()}else if(action==='share')shareSelectedItems();else await bulk(action);return}
+ const bulkButton=e.target.closest('[data-bulk]');if(bulkButton){const action=bulkButton.dataset.bulk;if(action==='done'){V.selectMode=false;V.selected.clear();render()}else if(action==='selectAll'){matchingItems().forEach(i=>V.selected.add(i.id));render()}else if(action==='share')await shareSelectedItems();else await bulk(action);return}
  const select=e.target.closest('[data-select]');if(select){e.stopPropagation();select.checked?V.selected.add(select.dataset.select):V.selected.delete(select.dataset.select);return}
  if(e.target.closest('.card-menu'))return;
  const cardEl=e.target.closest('.card');if(cardEl){if(V.selectMode){V.selected.has(cardEl.dataset.id)?V.selected.delete(cardEl.dataset.id):V.selected.add(cardEl.dataset.id);render()}else{V.mediaIndex=0;detail(cardEl.dataset.id)}}
@@ -1277,7 +1321,24 @@ addEventListener('dragover',e=>e.preventDefault());
 addEventListener('beforeinstallprompt',event=>{event.preventDefault();V.installPrompt=event});
 addEventListener('appinstalled',()=>{V.installPrompt=null;toast('Grabit was installed successfully.')});
 document.addEventListener('error',e=>{const image=e.target;if(!(image instanceof HTMLImageElement)||image.dataset.fallbackApplied)return;image.dataset.fallbackApplied='true';image.src=fallbackThumbnail(image.closest('.card')?.querySelector('.bd')?.textContent||'media')},{capture:true});
-addEventListener('drop',e=>{e.preventDefault();const dropped=[...e.dataTransfer.files],files=dropped.filter(file=>file.type.startsWith('image/')||file.type.startsWith('video/'));if(dropped.length!==files.length)toast('Only image and video files can be added by drag and drop.');if(!files.length)return;uploadDialog(files)});
+document.addEventListener('error',e=>{
+ const player=e.target;
+ if(!(player instanceof HTMLVideoElement)||player.dataset.localVideo!=='true'||player.closest('.media-open,.watch-tile')||player.nextElementSibling?.classList.contains('local-video-error'))return;
+ const item=V.items.find(entry=>entry.id===player.dataset.videoItem),media=item?.media.find(entry=>entry.id===player.dataset.videoMedia);
+ if(!item||!media)return;
+ const message=document.createElement('div');message.className='local-video-error';message.setAttribute('role','alert');
+ const text=document.createElement('p');text.className='hint';text.textContent=player.dataset.videoConverted?'The converted copy still cannot play in this browser. Your original remains saved on this device.':'This video uses a format or codec this browser cannot play directly. Try converting a compatible copy on this device; the original will stay unchanged and will not be uploaded.';
+ message.append(text);
+ const actions=document.createElement('div');actions.className='row';
+ if(player.dataset.videoConverted!=='true'){
+  const convert=document.createElement('button');convert.type='button';convert.className='b p';convert.textContent='Convert on this device';convert.addEventListener('click',()=>convertSavedVideo(item.id,media.id));actions.append(convert);
+ }
+ const download=document.createElement('button');download.type='button';download.className='b';download.textContent='Download original';download.addEventListener('click',async()=>{
+  try{const original=await originalVideoBlob(media);if(!original)throw new Error('Original video file is unavailable.');await downloadMedia(original,{itemId:item.id,localMediaId:media.id,title:item.title,type:'video',thumbnailUrl:media.thumbnailUrl||''})}
+  catch(error){console.error('Could not download the original video:',error);toast('Could not download the original video.')}
+ });actions.append(download);message.append(actions);player.insertAdjacentElement('afterend',message);
+},{capture:true});
+addEventListener('drop',e=>{e.preventDefault();const dropped=[...e.dataTransfer.files],files=dropped.filter(file=>file.type.startsWith('image/')||isVideoFile(file));if(dropped.length!==files.length)toast('Only image and video files can be added by drag and drop.');if(!files.length)return;uploadDialog(files)});
 async function init(){
  try{
   const mobile=matchMedia('(max-width:760px)').matches;$('#sbt').setAttribute('aria-expanded',String(mobile?$('#win').classList.contains('open'):!$('#win').classList.contains('hide')));

@@ -37,6 +37,7 @@ function validMedia(media){
   const expected=media.type==='image'?'data:image/':'data:video/';
   if(!media.storedDataUrl.startsWith(expected))return false;
  }
+ if(media.convertedDataUrl!==undefined&&(media.type!=='video'||typeof media.convertedDataUrl!=='string'||!media.convertedDataUrl.startsWith('data:video/')))return false;
  for(const key of ['url','playbackUrl','thumbnailUrl']){
   if(media[key]!==undefined&&media[key]!==''&&media[key]!==null&&(typeof media[key]!=='string'||!validUrl(media[key])))return false;
  }
