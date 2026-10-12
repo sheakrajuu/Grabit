@@ -2,6 +2,8 @@ import {$,esc,uid,host,validUrl,normalized,classify,fallbackThumbnail,socialMedi
 import {openDB,migrateLegacy,loadLibrary,storeItem as persistItem,storeSection as persistSection,removeItem as deleteStoredItem,removeSection as deleteStoredSection} from './storage.js';
 import {previewUrl,discoverPlaylistUrl,resolveVideoUrl,videoDownloadUrl} from './importer.js';
 import {consumeShortLibraryShareLink,createItemShareData,createItemsShareData,createShortLibraryShareLink,hasLibraryShareLink,isShortLibraryShareLink,readLibraryShareLink} from './share.js';
+import {inspectLibraryBackup} from './backup.js';
+import {matchesContentType} from './library-filter.js';
 
 'use strict';
 const V={view:'inbox',sectionId:null,q:'',type:'all',sort:'recent',filterSectionId:'',libraryPage:0,selectMode:false,selected:new Set(),mediaIndex:-1,dialogItemId:null,dialogMode:'view',editReturnToViewer:false,dialogReturnFocus:null,items:[],sections:[],downloads:[],downloadPreview:null,downloadFilter:'all',downloadError:'',downloadUrl:'',installPrompt:null,preview:null,previewRequestId:0,showingHiddenMedia:false,watch:null,watchScrollTimer:null,watchResizeObserver:null,shareData:null,pendingBackup:null,pendingShareLink:'',task:null,undo:null};
@@ -47,7 +49,7 @@ function renderTaskStatus(){
 function cancelTask(){
  if(!V.task?.controller||V.task.controller.signal.aborted)return;
  V.task.controller.abort();
- updateTask('Cancelling',V.task.completed,V.task.total);
+ updateTask('Stopping',V.task.completed,V.task.total);
 }
 function finishTask(task=V.task){if(V.task!==task)return;V.task=null;renderTaskStatus()}
 function taskCancelled(task){if(!task.controller.signal.aborted)return false;const error=new Error('Operation cancelled.');error.name='AbortError';throw error}
@@ -65,7 +67,7 @@ function applyTheme(theme,persist=false){const selected=theme==='light'?'light':
 async function refreshLibrary(){const data=await loadLibrary();V.items=data.items;V.sections=data.sections}
 function loadDownloadHistory(){try{const stored=JSON.parse(localStorage.getItem('grabit-download-history')||'[]');V.downloads=Array.isArray(stored)?stored.filter(entry=>entry&&typeof entry==='object'&&(typeof entry.url==='string'||typeof entry.localMediaId==='string')).slice(0,200):[]}catch(error){console.warn('Could not read download history:',error);V.downloads=[]}}
 function storeDownloadHistory(){try{localStorage.setItem('grabit-download-history',JSON.stringify(V.downloads.slice(0,200)))}catch(error){reportError('Could not save download history',error)}}
-function show(html,wide=false){if(!$('#md').classList.contains('on'))V.dialogReturnFocus=document.activeElement;$('#bx').innerHTML=html;$('#bx').classList.toggle('wide',wide);$('#md').classList.remove('image-view-mode');$('#md').classList.add('on');$('#bx').querySelector('h2')?.setAttribute('id','dialog-title');if($('#bx h2'))$('#bx').setAttribute('aria-labelledby','dialog-title');else $('#bx').removeAttribute('aria-labelledby');const focus=$('#bx input:not([type="hidden"]),#bx textarea,#bx select,#bx button');(focus||$('#bx')).focus()}
+function show(html,wide=false){closeFilterDropdowns();if(!$('#md').classList.contains('on'))V.dialogReturnFocus=document.activeElement;$('#bx').innerHTML=html;$('#bx').classList.toggle('wide',wide);$('#md').classList.remove('image-view-mode');$('#md').classList.add('on');$('#bx').querySelector('h2')?.setAttribute('id','dialog-title');if($('#bx h2'))$('#bx').setAttribute('aria-labelledby','dialog-title');else $('#bx').removeAttribute('aria-labelledby');const focus=$('#bx input:not([type="hidden"]),#bx textarea,#bx select,#bx button');(focus||$('#bx')).focus()}
 function hide(){const returnFocus=V.dialogReturnFocus;if(V.task?.kind==='preview')V.previewRequestId++;if(V.task)cancelTask();$('#md').classList.remove('on','image-view-mode');$('#bx').innerHTML='';V.dialogItemId=null;V.dialogMode='view';V.editReturnToViewer=false;V.dialogReturnFocus=null;if(returnFocus?.isConnected)returnFocus.focus();reloadForAppUpdate()}
 function focusCardMenuButton(id){[...document.querySelectorAll('[data-card-menu]')].find(button=>button.dataset.cardMenu===id)?.focus()}
 function reloadForAppUpdate(){
@@ -146,7 +148,7 @@ function matchingItems(){
   if(V.view==='downloads'&&!V.downloads.some(entry=>entry.itemId===i.id))return false;
   if(V.view==='section'&&!(i.sectionIds||[]).includes(V.sectionId))return false;
   if(V.filterSectionId&&!(i.sectionIds||[]).includes(V.filterSectionId))return false;
-  if(V.type!=='all'&&i.type!==V.type)return false;
+  if(!matchesContentType(i,V.type))return false;
   if(q&&!`${i.title} ${i.description} ${i.notes} ${i.sourceDomain} ${i.sourceUrl} ${i.originalUrl}`.toLocaleLowerCase().includes(q))return false;
   return true;
  });
@@ -177,6 +179,8 @@ function closeCardMenus(){
  });
 }
 function titleForView(){return V.view==='section'?sectionName(V.sectionId):({inbox:'Inbox',favorites:'Favorites',recent:'Recently added',downloads:'Download',archived:'Archived'}[V.view]||'Inbox')}
+function desktopFilter(id,label,value,options){return`<div class="desktop-filter"><button class="filter-trigger" type="button" data-dropdown-toggle="${id}" aria-label="${label}" aria-controls="${id}-options" aria-haspopup="listbox" aria-expanded="false">${esc(options.find(option=>option.value===value)?.label||label)}<span aria-hidden="true"></span></button><div class="filter-options" id="${id}-options" role="listbox" aria-label="${label}" hidden>${options.map(option=>`<button type="button" role="option" aria-selected="${option.value===value}" data-dropdown-option="${id}" data-value="${esc(option.value)}">${esc(option.label)}</button>`).join('')}</div></div>`}
+function closeFilterDropdowns(){document.querySelectorAll('.desktop-filter').forEach(filter=>{filter.querySelector('.filter-trigger')?.setAttribute('aria-expanded','false');const options=filter.querySelector('.filter-options');if(options)options.hidden=true});document.querySelectorAll('.tools.filter-menu-open').forEach(tools=>{tools.classList.remove('filter-menu-open');tools.style.removeProperty('--filter-menu-space')})}
 function render(){
  renderNav();$('#ttl').textContent=titleForView();$('#q').hidden=V.view==='downloads';
  if(V.view==='downloads'){renderDownloadHistory();return}
@@ -188,9 +192,12 @@ function render(){
  const typeLabels={all:'All types',bookmark:'Websites',image:'Images',video:'Videos',gallery:'Galleries',playlist:'Playlists',note:'Notes'};
  const filterActive=Boolean(V.q.trim()||V.type!=='all'||V.filterSectionId);
  const actions=V.selectMode?`<span class="selection-count" role="status" aria-live="polite">${V.selected.size} selected</span>${items.length?'<button class="b" data-bulk="selectAll">Select all</button>':''}${V.selected.size>1?'<button class="b" data-bulk="share">Share contents</button>':''}${V.selected.size&&V.view!=='inbox'?'<button class="b" data-bulk="inbox">Move to Inbox</button>':''}${V.selected.size?'<button class="b d" data-bulk="delete">Delete</button>':''}<button class="b" data-bulk="done">Done</button>`:items.length?'<button class="b" id="selectMode">Select</button>':'';
- const sectionFilter=V.view==='inbox'||V.view==='section'?'':`<select class="in" id="sectionFilter" aria-label="Filter by section"><option value="">All sections</option>${V.sections.map(section=>`<option value="${esc(section.id)}"${V.filterSectionId===section.id?' selected':''}>${esc(section.name)}</option>`).join('')}</select>`;
- const sortFilter=V.view==='recent'?'':`<select class="in" id="sortOrder" aria-label="Sort content"><option value="recent"${V.sort==='recent'?' selected':''}>Recently added</option><option value="oldest"${V.sort==='oldest'?' selected':''}>Oldest added</option><option value="alphabetical"${V.sort==='alphabetical'?' selected':''}>Alphabetical</option><option value="updated"${V.sort==='updated'?' selected':''}>Recently updated</option></select>`;
- const toolbar=`<div class="tools"><select class="in" id="typeFilter" aria-label="Filter by content type">${types.map(t=>`<option value="${t}"${V.type===t?' selected':''}>${typeLabels[t]}</option>`).join('')}</select>${sortFilter}${sectionFilter}${filterActive?'<button class="b" data-clear-filters>Clear filters</button>':''}${actions}</div>`;
+ const typeOptions=types.map(type=>({value:type,label:typeLabels[type]}));
+ const sortOptions=[{value:'recent',label:'Recently added'},{value:'oldest',label:'Oldest added'},{value:'alphabetical',label:'Alphabetical'},{value:'updated',label:'Recently updated'}];
+ const sectionOptions=[{value:'',label:'All sections'},...V.sections.map(section=>({value:section.id,label:section.name}))];
+ const sectionFilter=V.view==='inbox'||V.view==='section'?'':`<select class="in" id="sectionFilter" aria-label="Filter by section">${sectionOptions.map(option=>`<option value="${esc(option.value)}"${V.filterSectionId===option.value?' selected':''}>${esc(option.label)}</option>`).join('')}</select>`;
+ const sortFilter=V.view==='recent'?'':`<select class="in" id="sortOrder" aria-label="Sort content">${sortOptions.map(option=>`<option value="${option.value}"${V.sort===option.value?' selected':''}>${option.label}</option>`).join('')}</select>`;
+ const toolbar=`<div class="tools"><div class="mobile-filters"><select class="in" id="typeFilter" aria-label="Filter by content type">${typeOptions.map(option=>`<option value="${option.value}"${V.type===option.value?' selected':''}>${option.label}</option>`).join('')}</select>${sortFilter}${sectionFilter}</div><div class="desktop-filters">${desktopFilter('typeFilter','Filter by content type',V.type,typeOptions)}${V.view==='recent'?'':desktopFilter('sortOrder','Sort content',V.sort,sortOptions)}${V.view==='inbox'||V.view==='section'?'':desktopFilter('sectionFilter','Filter by section',V.filterSectionId,sectionOptions)}</div>${filterActive?'<button class="b" data-clear-filters>Clear filters</button>':''}${actions}</div>`;
  const empty=V.view==='inbox'?'Your Inbox is empty. Save a link, write a note, or add an image to get started.':V.view==='favorites'?'Items you favorite will appear here.':V.view==='archived'?'Archived items will appear here.':V.view==='section'?'This section is empty. Add content or move items here.':'Your Inbox is empty. Save a link, write a note, or add an image to get started.';
  const pagination=pageCount>1?`<nav class="library-pagination" aria-label="Library pages"><button class="b" data-library-page="${V.libraryPage-1}"${V.libraryPage===0?' disabled':''}>Previous</button><span>Showing ${V.libraryPage*LIBRARY_PAGE_SIZE+1}–${Math.min((V.libraryPage+1)*LIBRARY_PAGE_SIZE,items.length)} of ${items.length}</span><button class="b" data-library-page="${V.libraryPage+1}"${V.libraryPage===pageCount-1?' disabled':''}>Next</button></nav>`:'';
  const emptyMessage=filterActive?'No items match these filters.':empty;
@@ -220,7 +227,7 @@ function previewPanel(){
  const state=V.preview;if(!state)return;
  const countSelected=state.pages.reduce((count,page)=>count+page.media.filter(media=>page.selected.has(media.url)).length,0);
  const hiddenCount=new Set(state.pages.flatMap(page=>[...page.hiddenUrls])).size;
- const discoveryStatus=state.discoveryPending?'<p class="hint" role="status">Looking for public video lists in the background. You can save the media already found.</p>':'';
+ const discoveryStatus=state.discoveryPending?'<p class="hint" role="status">Preparing preview…</p>':'';
  const sections=state.pages.map((page,pageIndex)=>{
   const available=page.media.map((media,mediaIndex)=>({media,mediaIndex})).filter(({media})=>state.showHidden||!page.hiddenUrls.has(media.url));
   const tiles=available.map(({media,mediaIndex})=>`<div class="media-tile ${media.type==='video'?'video-tile':''}">
@@ -244,7 +251,7 @@ async function previewPage(requestedUrls){
  if(urls.length!==inputs.length){toast('One or more URLs are invalid; correct them before previewing.');return}
  const button=$('[data-action="previewPage"]');button.disabled=true;button.textContent='Loading pages…';
  const previewRequestId=++V.previewRequestId;
- const task=startTask('Scanning pages',urls.length,'preview'),signal=task.controller.signal;
+ const task=startTask('Preparing preview',urls.length,'preview'),signal=task.controller.signal;
  try{
   let completed=0;
   const results=await Promise.all(urls.map(async url=>{
@@ -256,8 +263,8 @@ async function previewPage(requestedUrls){
     const prior=V.items.filter(item=>item.canonicalUrl===canonical||normalized(item.sourceUrl)===canonical||item.sourceUrls?.some(saved=>normalized(saved)===canonical));
     const hiddenUrls=new Set(prior.flatMap(item=>item.hiddenMediaUrls||[]));
     return{...page,canonicalUrl:canonical,hiddenUrls,selected:new Set(page.media.filter(media=>!hiddenUrls.has(media.url)).map(media=>media.url)),extracted:true};
-   }catch(error){return{url,canonicalUrl:normalized(url),title:host(url),description:'',media:[],hiddenUrls:new Set(),selected:new Set(),error:error.message,cancelled:error.name==='AbortError',extracted:false}}
-   finally{completed++;updateTask(signal.aborted?'Cancelling':'Scanning pages',completed,urls.length,task)}
+   }catch(error){if(error.name!=='AbortError')console.warn('Could not prepare a page preview:',error);return{url,canonicalUrl:normalized(url),title:host(url),description:'',media:[],hiddenUrls:new Set(),selected:new Set(),error:error.name==='AbortError'?'Preview stopped.':'This page could not be previewed. You can still save the link.',cancelled:error.name==='AbortError',extracted:false}}
+   finally{completed++;updateTask(signal.aborted?'Stopping':'Preparing preview',completed,urls.length,task)}
   }));
   if(V.previewRequestId!==previewRequestId)return;
   const pages=results.filter(page=>!page.cancelled).sort((a,b)=>urls.indexOf(a.url)-urls.indexOf(b.url));
@@ -271,8 +278,8 @@ async function previewPage(requestedUrls){
   previewPanel();
   const previewState=V.preview;
   if(candidates.length&&!signal.aborted){
-   updateTask('Checking for video lists',0,candidates.length,task);
-   button.textContent='Checking video lists…';
+   updateTask('Preparing preview',0,candidates.length,task);
+   button.textContent='Preparing preview…';
    let completedDiscovery=0;
    await Promise.all(candidates.map(async page=>{
     try{
@@ -288,16 +295,16 @@ async function previewPage(requestedUrls){
      page.mediaWarning=result.mediaWarning||page.mediaWarning||'';
      page.truncated=page.truncated||result.truncated;
     }catch(error){
-     if(error.name!=='AbortError'){page.mediaWarning=`Could not check for a video list: ${error.message}`;errors.push({url:page.url,error:page.mediaWarning})}
+     if(error.name!=='AbortError'){console.warn('Could not complete a page preview:',error);page.mediaWarning='Some media could not be loaded.';errors.push({url:page.url,error:page.mediaWarning})}
     }finally{
      const done=++completedDiscovery;
-     updateTask(signal.aborted?'Cancelling':'Checking for video lists',done,candidates.length,task);
+     updateTask(signal.aborted?'Stopping':'Preparing preview',done,candidates.length,task);
      if(V.preview===previewState){previewState.discoveryPending=done<candidates.length&&!signal.aborted;previewState.errors=errors;previewPanel()}
     }
    }));
   }
   if(signal.aborted&&V.preview===previewState){previewState.discoveryPending=false;previewState.errors=errors;previewPanel();toast('Preview stopped. You can still save the pages and media found so far.')}
- }catch(error){if(V.previewRequestId===previewRequestId)toast(signal.aborted?'Preview stopped.':error.message||'Could not load the preview.')}
+ }catch(error){if(V.previewRequestId===previewRequestId){console.warn('Could not prepare the preview:',error);toast(signal.aborted?'Preview stopped.':'Could not prepare this preview. You can still save the link.')}}
  finally{finishTask(task);if(V.previewRequestId===previewRequestId&&button.isConnected){button.disabled=false;button.textContent='Preview media'}}
 }
 async function savePreview(){
@@ -404,7 +411,7 @@ async function downloadMedia(url,{itemId='',title='Media',type='image',thumbnail
   }
   document.body.append(anchor);anchor.click();anchor.remove();
   V.downloads.unshift({itemId,url,title,type,thumbnailUrl,filename,ytDlp,formatId,downloadedAt:new Date().toISOString()});V.downloads=V.downloads.slice(0,200);storeDownloadHistory();renderNav();toast(`Download started: ${filename}`);
- }catch(error){console.error('Media download failed:',error);toast(error.message||'Could not download this media.')}
+ }catch(error){console.error('Media download failed:',error);toast('Could not download this media. Try again or open the original link.')}
 }
 function renderDownloadHistory(){
  const records=V.downloads;
@@ -440,7 +447,7 @@ async function discoverDownloads(start=1,rawUrl=''){
   if(kind==='image'||kind==='video')page={title:host(url.href),media:[{type:kind,url:url.href,thumbnailUrl:kind==='image'?url.href:''}]};
    else{
     try{page=await previewUrl(url.href,start>1?{start}:{})}
-    catch(error){page={title:host(url.href),media:[],previewWarning:error.message||'The page preview failed.'}}
+    catch(error){console.warn('Could not prepare download preview:',error);page={title:host(url.href),media:[],previewWarning:'Could not prepare this preview. You can still open the original link.'}}
    }
   let media=(Array.isArray(page.media)?page.media:[]).filter(entry=>entry&&typeof entry.url==='string').flatMap(entry=>{
    if(entry.type!=='image'||!Array.isArray(entry.qualityOptions))return[entry];
@@ -448,13 +455,14 @@ async function discoverDownloads(start=1,rawUrl=''){
   }).sort((a,b)=>(Number(b.width||0)*Number(b.height||0))-(Number(a.width||0)*Number(a.height||0))||(Number(b.quality||0)-Number(a.quality||0)));
   if(V.downloadFilter!=='image'&&!page.playlistPaging&&!media.some(entry=>entry.type==='video'&&(entry.playbackUrl||(!entry.providerUrl&&!entry.embedUrl)))){
    try{media=[...media.filter(entry=>entry.type!=='video'),await resolveVideoUrl(url.href)]}
-   catch(error){if(media.length)console.warn('yt-dlp could not resolve another video source:',error);else if(page.previewWarning)throw new Error(`${page.previewWarning} ${error.message}`);else throw error}
+   catch(error){if(media.length)console.warn('Could not resolve an additional video source:',error);else if(page.previewWarning)throw new Error(page.previewWarning);else throw error}
   }
   V.downloadPreview={title:page.title||host(url.href),media,truncated:!!page.truncated,warning:page.mediaWarning||page.previewWarning||'',playlistPaging:page.playlistPaging===true,start:page.start||1,hasMore:page.hasMore===true};
   V.downloadError='';
   renderDownloadHistory();
  }catch(error){
-  V.downloadError=error.message||'Could not inspect this URL.';
+  console.warn('Could not prepare the download preview:',error);
+  V.downloadError='Could not prepare this link. You can still open the original page.';
   renderDownloadHistory();
  }
 }
@@ -529,7 +537,8 @@ async function loadWatchPage(item){
      item.hiddenMediaUrls=[...hiddenUrls];
      pages.push({...saved,index,playlistStart:result.start||start,playlistHasMore:result.hasMore===true,playlistHasMoreByStart:{...(saved.playlistHasMoreByStart||{}),[start]:result.hasMore===true},mediaWarning:result.mediaWarning||'',media,extracted:true});
     }catch(error){
-     pages.push({...saved,index,mediaWarning:`Could not refresh this video list: ${error.message}`});
+     console.warn('Could not refresh saved media:',error);
+     pages.push({...saved,index,mediaWarning:'Some media could not be refreshed.'});
     }
     continue;
    }
@@ -537,7 +546,8 @@ async function loadWatchPage(item){
    try{pages.push({...await extractPageForWatch(url),index,extracted:true})}
    catch(error){
     const cachedMedia=saved?.media||[];
-    pages.push({...saved,url,canonicalUrl:saved?.canonicalUrl||normalized(url),title:saved?.title||host(url),description:saved?.description||'',media:cachedMedia,index,extracted:cachedMedia.length>0,...(cachedMedia.length?{mediaWarning:`Could not refresh this video list: ${error.message}`}:{error:error.message})});
+    console.warn('Could not refresh a saved page:',error);
+    pages.push({...saved,url,canonicalUrl:saved?.canonicalUrl||normalized(url),title:saved?.title||host(url),description:saved?.description||'',media:cachedMedia,index,extracted:cachedMedia.length>0,...(cachedMedia.length?{mediaWarning:'Some media could not be refreshed.'}:{error:'This page could not be previewed. You can still open the original link.'})});
    }
   }
   if(!pages.length)throw new Error('No valid page URLs are saved for this item.');
@@ -548,7 +558,7 @@ async function loadWatchPage(item){
   if(!item.thumbnailUrl||item.thumbnailUrl.startsWith('data:image/svg+xml,')||(item.hiddenMediaUrls||[]).includes(item.thumbnailUrl))item.thumbnailUrl=defaultThumbnail(item);
   item.updatedAt=new Date().toISOString();await storeItem(item);await refreshLibrary();
   if(V.watch?.itemId===item.id){V.watch.loading=false;renderWatchPage(false);if(item.sourcePages.some(page=>page.error))toast('Some URLs could not be previewed; use the URL controls to continue or retry.')}
- }catch(error){console.error('Could not load saved page media:',error);if(V.watch?.itemId===item.id){V.watch.loading=false;V.watch.retrying=true;renderWatchPage(false,`Could not fetch this page's media: ${error.message}`)}}
+ }catch(error){console.error('Could not load saved page media:',error);if(V.watch?.itemId===item.id){V.watch.loading=false;V.watch.retrying=true;renderWatchPage(false,'Could not load this page right now. Try again or open the original link.')}}
 }
 async function playVideoInGrabit(item,media,index){
  const watch=V.watch;if(!watch||watch.itemId!==item.id)return;
@@ -566,7 +576,7 @@ async function findAndPlayVideo(item){
  const pages=Array.isArray(item.sourcePages)&&item.sourcePages.length?item.sourcePages:sourcePages(item);
  item.sourcePages=pages;
  const page=pages[watch.pageIndex];
- watch.loading=true;renderWatchPage(false,'Looking for a public playable video…');
+ watch.loading=true;renderWatchPage(false,'Preparing video…');
  try{
   const resolved=await resolveVideoUrl(page.url);
   const media={...resolved,alt:resolved.alt||page.title||item.title,position:page.media.length,pageIndex:page.index};
@@ -578,7 +588,7 @@ async function findAndPlayVideo(item){
   catch(error){reportError('Could not save the discovered video',error)}
   watch.mediaIndex=watchPageMedia(item,page).length-1;watch.loading=false;syncWatchUrl();renderWatchPage();
  }catch(error){
-  watch.loading=false;renderWatchPage();toast(`No playable public video was found: ${error.message}`);
+  console.warn('Could not prepare a playable video:',error);watch.loading=false;renderWatchPage();toast('Could not prepare this video. Try opening the original link.');
  }
 }
 async function loadPlaylistBatch(item,page,start){
@@ -617,7 +627,7 @@ async function loadPlaylistBatch(item,page,start){
   item.updatedAt=new Date().toISOString();await storeItem(item);await refreshLibrary();
   watch.mediaIndex=-1;watch.showingHidden=false;watch.scrollTop=0;watch.loading=false;syncWatchUrl();renderWatchPage(true);
  }catch(error){
-  watch.loading=false;renderWatchPage();toast(`Could not load videos ${start}–${Math.min(start+9,500)}: ${error.message}`);
+  console.warn('Could not load the selected playlist page:',error);watch.loading=false;renderWatchPage();toast('Could not load these videos right now. Please try again.');
  }
 }
 async function changePlaylistBatch(item,page,start){
@@ -800,7 +810,7 @@ async function continueImport(pending,mode){
  const otherUrls=work.filter(url=>!videoCollectionTitle(url));
  const kinds=otherUrls.map(classify);let saved=0;const errors=[];
  const saveButton=$('#saveImportButton');
- if(saveButton){saveButton.disabled=true;saveButton.textContent=videoCollections.length?'Fetching playlist…':'Saving…'}
+ if(saveButton){saveButton.disabled=true;saveButton.textContent='Saving…'}
  V.preview=null;
  try{
   for(const {existing}of sectionDuplicates){
@@ -827,8 +837,8 @@ async function continueImport(pending,mode){
     const page={url,canonicalUrl,title:preview.title||videoCollectionTitle(url),description:preview.description||'',index:0,extracted:true,refetchOnOpen:false,playlistPaging:videoCollectionTitle(url)!=='',playlistStart:preview.start||1,playlistHasMore:preview.hasMore===true,playlistHasMoreByStart:{[preview.start||1]:preview.hasMore===true},truncated:!!preview.truncated,mediaWarning:preview.mediaWarning||'',media};
     const item=emptyItem({type:'playlist',title:work.length===1&&title?title:page.title,description:work.length===1?description:page.description,sourceUrl:url,media,thumbnailUrl:media.find(entry=>entry.thumbnailUrl&&!hidden.has(entry.sourceUrl))?.thumbnailUrl||fallbackThumbnail('playlist'),sectionIds:chosen});
     item.canonicalUrl=canonicalUrl;item.sourceUrls=[url];item.sourcePages=[page];item.hiddenMediaUrls=hiddenMediaUrls;
-    await storeItem(item);saved++;updateTask('Saving playlists',++task.completed,task.total,task);
-   }catch(error){if(error.name==='AbortError')throw error;errors.push(`${url}: ${error.message}`);updateTask('Saving playlists',++task.completed,task.total,task)}
+    await storeItem(item);saved++;updateTask('Saving links',++task.completed,task.total,task);
+   }catch(error){if(error.name==='AbortError')throw error;errors.push(`${url}: ${error.message}`);updateTask('Saving links',++task.completed,task.total,task)}
   }
   taskCancelled(task);
   if(otherUrls.length>1&&kinds.every(kind=>kind==='image'||kind==='video')){
@@ -854,7 +864,7 @@ async function continueImport(pending,mode){
   if(invalid.length)console.warn('Invalid URLs skipped:',invalid);if(errors.length)console.error('Some URLs could not be saved:',errors);
  }catch(error){
   await refreshLibrary();finishTask(task);
-  if(error.name==='AbortError'){hide();render();toast(`${countLabel(saved,'entry')} saved before cancellation.`)}
+  if(error.name==='AbortError'){hide();render();toast(`${countLabel(saved,'entry')} saved before stopping.`)}
   else{if(saveButton?.isConnected){saveButton.disabled=false;saveButton.textContent='Save links'}reportError('Could not save imported links',error)}
  }
 }
@@ -878,9 +888,9 @@ async function saveImages(){
    count++;
   }
   catch(error){if(error.name==='AbortError')break;errors.push(`${file.name}: ${error.message}`)}
-  updateTask(task.controller.signal.aborted?'Cancelling':'Adding media',++task.completed,files.length,task);
+  updateTask(task.controller.signal.aborted?'Stopping':'Adding media',++task.completed,files.length,task);
  }
- V.droppedFiles=[];await refreshLibrary();finishTask(task);hide();render();toast(`${countLabel(count,'file')} saved${task.controller.signal.aborted?' before cancellation':''}${errors.length?`; ${countLabel(errors.length,'file')} could not be saved: ${errors[0]}`:''}.`);if(errors.length)console.error('Media upload errors:',errors);
+ V.droppedFiles=[];await refreshLibrary();finishTask(task);hide();render();toast(`${countLabel(count,'file')} saved${task.controller.signal.aborted?' before stopping':''}${errors.length?`; ${countLabel(errors.length,'file')} could not be saved. Try a smaller file or check available storage.`:''}.`);if(errors.length)console.error('Media upload errors:',errors);
 }
 async function saveDetail(id){
  const item=V.items.find(x=>x.id===id);if(!item)return;
@@ -922,7 +932,7 @@ async function bulk(action,confirmed=false){
    if(action==='favorite')item.isFavorite=shouldFavorite;
    if(action==='delete')await removeItem(item.id);
    else{item.updatedAt=new Date().toISOString();await storeItem(item)}
-   changed.push(item.id);updateTask(task.controller.signal.aborted?'Cancelling':action==='delete'?'Deleting items':'Updating items',changed.length,items.length,task);
+   changed.push(item.id);updateTask(task.controller.signal.aborted?'Stopping':action==='delete'?'Removing items':'Updating library',changed.length,items.length,task);
   }
   V.selected.clear();await refreshLibrary();finishTask(task);render();
   const undo=async()=>{for(const id of changed)await storeItem(snapshots.get(id))};
@@ -943,11 +953,11 @@ function libraryExportData(){
 }
 function shareDialog(data,title,description){
  V.shareData=data;
- show(`<b>${esc(title)}</b><p class="hint">${esc(description)} The content is encrypted in this browser with AES-256-GCM before upload. The server receives only ciphertext; the decryption key is in the link fragment and is not sent in HTTP requests. The one-time link is consumed after the first successful import. Server restarts may invalidate links. Anyone with the complete link can decrypt it, so share it privately. This does not protect against a server operator who replaces the app code delivered to your browser.</p><div class="row"><button class="b p" data-action="createShareLink">Create encrypted one-time link</button><button class="b" data-action="close">Close</button></div><div id="shareLinkOutput" hidden><label for="shareLinkValue">Encrypted share link</label><textarea class="in" id="shareLinkValue" rows="2" readonly></textarea><div class="row"><button class="b" data-action="copyShareLink">Copy link</button></div></div>`);
+ show(`<b>${esc(title)}</b><p class="hint">${esc(description)} The content is encrypted in this browser before the link is created. The link is one-time and is consumed after the first successful import. Anyone with the complete link can decrypt it, so share it privately.</p><div class="row"><button class="b p" data-action="createShareLink">Create encrypted one-time link</button><button class="b" data-action="close">Close</button></div><div id="shareLinkOutput" hidden><label for="shareLinkValue">Encrypted share link</label><textarea class="in" id="shareLinkValue" rows="2" readonly></textarea><div class="row"><button class="b" data-action="copyShareLink">Copy link</button></div></div>`);
 }
 function exportDialog(){
  V.shareData=null;
- show(`<b>Export library</b><p class="hint">Create an encrypted one-time share link or download a JSON backup. Shares are encrypted in this browser with AES-256-GCM before the server receives them; the server stores ciphertext only. Anyone with the complete link can decrypt its content. Server restarts can invalidate unused links. JSON backups are not encrypted.</p><div class="row"><button class="b p" data-action="createShareLink">Create encrypted one-time link</button><button class="b" data-action="downloadExport">Download JSON</button><button class="b" data-action="restoreDialog">Import…</button><button class="b" data-action="close">Close</button></div><div id="shareLinkOutput" hidden><label for="shareLinkValue">Encrypted share link</label><textarea class="in" id="shareLinkValue" rows="2" readonly></textarea><div class="row"><button class="b" data-action="copyShareLink">Copy link</button></div></div>`);
+ show(`<b>Export library</b><p class="hint">A JSON backup includes saved items, sections, and uploaded image/video data. External media is saved as links, not downloaded copies. JSON backups are unencrypted, so store them somewhere private. Importing a backup keeps existing items and skips duplicates.</p><div class="row"><button class="b p" data-action="createShareLink">Create encrypted one-time link</button><button class="b" data-action="downloadExport">Download JSON backup</button><button class="b" data-action="restoreDialog">Import…</button><button class="b" data-action="close">Close</button></div><div id="shareLinkOutput" hidden><label for="shareLinkValue">Encrypted share link</label><textarea class="in" id="shareLinkValue" rows="2" readonly></textarea><div class="row"><button class="b" data-action="copyShareLink">Copy link</button></div></div>`);
 }
 function shareItem(id){
  const item=V.items.find(entry=>entry.id===id);if(!item)return;
@@ -962,13 +972,15 @@ function shareSelectedItems(){
  }catch(error){reportError('Could not prepare selected items for sharing',error)}
 }
 function restoreDialog(){
- show(`<b>Import library</b><p class="hint">Existing items stay; duplicates are skipped.</p><label for="shareLinkInput">Share link</label><textarea class="in" id="shareLinkInput" rows="2" placeholder="Paste a Grabit share link"></textarea><div class="row"><button class="b p" data-action="importShareLink">Import share link</button></div><label for="restoreFile">JSON backup</label><input class="in" id="restoreFile" type="file" accept="application/json,.json"><div class="row"><button class="b" data-action="restore">Import JSON backup</button><button class="b" data-action="exportDialog">Back</button></div>`);
+ show(`<b>Import library</b><p class="hint">Imports add content without replacing what is here. Matching items are skipped as duplicates. JSON backups are unencrypted and limited to 30 MB.</p><label for="shareLinkInput">Grabit share link</label><textarea class="in" id="shareLinkInput" rows="2" placeholder="Paste a Grabit share link"></textarea><div class="row"><button class="b p" data-action="importShareLink">Review share link</button></div><label for="restoreFile">JSON backup file</label><input class="in" id="restoreFile" type="file" accept="application/json,.json"><div class="row"><button class="b" data-action="restore">Review JSON backup</button><button class="b" data-action="exportDialog">Back</button></div>`);
 }
-function confirmLibraryRestore(data,source,shareLink=''){
+function confirmLibraryRestore(data,source,shareLink='',summary=null){
  V.pendingBackup=data;
  V.pendingShareLink=shareLink;
  const shareNotice=shareLink?'<p class="hint">This link is used only after a successful import. The imported content is saved in this browser.</p>':'';
- show(`<b>Import ${esc(source)}</b><p>Import ${countLabel(data.items.length,'item')} and ${countLabel(data.sections.length,'section')}? Existing content will be kept, and duplicates will be skipped.</p>${shareNotice}<div class="row"><button class="b p" data-action="confirmRestore">Import library</button><button class="b" data-action="close">Cancel</button></div>`);
+ const skipped=summary&&(summary.skippedItems||summary.skippedSections)?`<p class="hint" role="status">Entries that fail validation will be skipped: ${countLabel(summary.skippedItems,'item')}, ${countLabel(summary.skippedSections,'section')}.</p>`:'';
+ const fileContents=source==='JSON backup'?'<p class="hint">Uploaded media data is included; external media remains linked to its original URL. This backup is not encrypted.</p>':'';
+ show(`<b>Review ${esc(source)}</b><p>Ready to add ${countLabel(summary?.validItems??data.items.length,'item')} and ${countLabel(summary?.validSections??data.sections.length,'section')}. Existing content will remain. Matching items will be skipped as duplicates.</p>${skipped}${fileContents}${shareNotice}<div class="row"><button class="b p" data-action="confirmRestore">Import library</button><button class="b" data-action="close">Cancel</button></div>`);
 }
 async function createShareLink(){
  const button=$('[data-action="createShareLink"]');
@@ -996,23 +1008,26 @@ async function importShareLink(){
 async function restoreBackup(){
  const file=$('#restoreFile').files[0];if(!file){toast('Choose a JSON backup file.');return}if(file.size>30*1024*1024){toast('Backup files must be smaller than 30 MB.');return}
  let data;try{data=JSON.parse(await file.text())}catch{toast('This file is not valid JSON.');return}
- if(data?.format!=='grabit-library'||data.version!==1||!Array.isArray(data.items)||!Array.isArray(data.sections)){toast('This is not a supported Grabit library backup.');return}
- confirmLibraryRestore(data,'JSON backup');
+ try{
+  const inspected=inspectLibraryBackup(data);
+  if(!inspected.validItems&&!inspected.validSections){toast('This backup contains no valid items or sections to import.');return}
+  confirmLibraryRestore(inspected.data,'JSON backup','',inspected);
+ }catch(error){toast(error.message||'This is not a supported Grabit library backup.')}
 }
 async function commitRestore(){
  const data=V.pendingBackup;if(!data)return;V.pendingBackup=null;const shareLink=V.pendingShareLink;V.pendingShareLink=null;
  let added=0,duplicates=0;const sectionMap=new Map(),task=startTask('Importing backup',data.items.length+data.sections.length,'restore');
  try{
-  for(const section of data.sections){taskCancelled(task);if(!section||typeof section.name!=='string'||typeof section.id!=='string'){updateTask('Importing collections',++task.completed,task.total,task);continue}let existing=V.sections.find(s=>s.id===section.id||s.name.toLowerCase()===section.name.toLowerCase());if(!existing){existing={...section,position:V.sections.length};await storeSection(existing);V.sections.push(existing)}sectionMap.set(section.id,existing.id);updateTask('Importing collections',++task.completed,task.total,task)}
+  for(const section of data.sections){taskCancelled(task);if(!section||typeof section.name!=='string'||typeof section.id!=='string'){updateTask('Importing backup',++task.completed,task.total,task);continue}let existing=V.sections.find(s=>s.id===section.id||s.name.toLowerCase()===section.name.toLowerCase());if(!existing){existing={...section,position:V.sections.length};await storeSection(existing);V.sections.push(existing)}sectionMap.set(section.id,existing.id);updateTask('Importing backup',++task.completed,task.total,task)}
   await refreshLibrary();
   for(const item of data.items){
    taskCancelled(task);
    if(!item||typeof item.id!=='string'||typeof item.title!=='string'||!['bookmark','note','image','video','gallery','playlist'].includes(item.type)||!Array.isArray(item.media)||!Array.isArray(item.sectionIds))continue;
-   if(item.sourceUrl&&!validUrl(item.sourceUrl)){updateTask('Importing items',++task.completed,task.total,task);continue}
-   if(item.media.some(m=>m.sourceUrl&&!validUrl(m.sourceUrl)&&!m.storedDataUrl)){updateTask('Importing items',++task.completed,task.total,task);continue}
-   if(item.canonicalUrl&&V.items.some(x=>x.canonicalUrl===item.canonicalUrl)){duplicates++;updateTask('Importing items',++task.completed,task.total,task);continue}
+   if(item.sourceUrl&&!validUrl(item.sourceUrl)){updateTask('Importing backup',++task.completed,task.total,task);continue}
+   if(item.media.some(m=>m.sourceUrl&&!validUrl(m.sourceUrl)&&!m.storedDataUrl)){updateTask('Importing backup',++task.completed,task.total,task);continue}
+   if(item.canonicalUrl&&V.items.some(x=>x.canonicalUrl===item.canonicalUrl)){duplicates++;updateTask('Importing backup',++task.completed,task.total,task);continue}
    const sectionIds=item.sectionIds.map(oldId=>sectionMap.get(oldId)).filter(Boolean);const now=new Date().toISOString();
-   await storeItem({...item,id:V.items.some(x=>x.id===item.id)?uid():item.id,sectionIds,inbox:sectionIds.length===0,savedAt:now,updatedAt:now});added++;updateTask('Importing items',++task.completed,task.total,task);
+   await storeItem({...item,id:V.items.some(x=>x.id===item.id)?uid():item.id,sectionIds,inbox:sectionIds.length===0,savedAt:now,updatedAt:now});added++;updateTask('Importing backup',++task.completed,task.total,task);
   }
   await refreshLibrary();finishTask(task);hide();render();
   let shareMessage='';
@@ -1020,14 +1035,14 @@ async function commitRestore(){
    try{await consumeShortLibraryShareLink(shareLink)}
    catch(error){console.error('Imported content, but could not consume the share link:',error);shareMessage=' The import is saved here, but the link may still work.'}
   }
-  toast(`Restored ${countLabel(added,'item')}.${duplicates?` ${countLabel(duplicates,'duplicate')} skipped.`:''} Any invalid backup entries were ignored.${shareMessage}`);
+  toast(`Imported ${countLabel(added,'item')}.${duplicates?` ${countLabel(duplicates,'duplicate')} skipped.`:''}${shareMessage}`);
  }catch(error){
   await refreshLibrary();finishTask(task);
   if(error.name==='AbortError'){hide();render();toast(`Import cancelled. ${countLabel(added,'item')} imported before cancellation.`)}
   else reportError('Restore stopped; some earlier records may already have been added',error)
  }
 }
-function reportError(message,error){console.error(message,error);toast(`${message}: ${error?.message||'unexpected storage error'}`)}
+function reportError(message,error){console.error(message,error);toast(`${message}. Please try again.`)}
 async function manageDelete(id){
  const section=V.sections.find(s=>s.id===id);if(!section)return;
  const count=V.items.filter(i=>(i.sectionIds||[]).includes(id)).length;
@@ -1109,6 +1124,11 @@ $('#md').addEventListener('input',e=>{
  if(e.target.id==='urls'){if(V.task?.kind==='preview')cancelTask();V.previewRequestId++;const previewButton=$('[data-action="previewPage"]');if(previewButton){previewButton.disabled=false;previewButton.textContent='Preview media'}if(V.preview){V.preview=null;$('#extractionPreview').innerHTML='';const saveButton=$('#saveImportButton');if(saveButton)saveButton.textContent='Save links'}}
 });
 $('#main').addEventListener('click',async e=>{
+ const filterOption=e.target.closest('[data-dropdown-option]');
+ if(filterOption){const field=filterOption.dataset.dropdownOption,value=filterOption.dataset.value;if(field==='typeFilter')V.type=value;if(field==='sortOrder')V.sort=value;if(field==='sectionFilter')V.filterSectionId=value;V.libraryPage=0;closeFilterDropdowns();render();document.querySelector(`[data-dropdown-toggle="${field}"]`)?.focus();return}
+ const filterToggle=e.target.closest('[data-dropdown-toggle]');
+ if(filterToggle){const options=filterToggle.nextElementSibling,opening=options.hidden;closeFilterDropdowns();if(opening){options.hidden=false;filterToggle.setAttribute('aria-expanded','true');const tools=filterToggle.closest('.tools');tools.classList.add('filter-menu-open');tools.style.setProperty('--filter-menu-space',`${options.offsetHeight+6}px`);options.querySelector('[aria-selected="true"]')?.focus()}return}
+ if(!e.target.closest('.desktop-filter'))closeFilterDropdowns();
  const libraryPage=e.target.closest('[data-library-page]');
  if(libraryPage){V.libraryPage=Number(libraryPage.dataset.libraryPage);render();$('#main').scrollTo({top:0,behavior:'auto'});return}
  const downloadFilter=e.target.closest('[data-download-filter]');
@@ -1180,6 +1200,13 @@ $('#main').addEventListener('click',async e=>{
  const select=e.target.closest('[data-select]');if(select){e.stopPropagation();select.checked?V.selected.add(select.dataset.select):V.selected.delete(select.dataset.select);return}
  if(e.target.closest('.card-menu'))return;
  const cardEl=e.target.closest('.card');if(cardEl){if(V.selectMode){V.selected.has(cardEl.dataset.id)?V.selected.delete(cardEl.dataset.id):V.selected.add(cardEl.dataset.id);render()}else{V.mediaIndex=0;detail(cardEl.dataset.id)}}
+});
+$('#main').addEventListener('keydown',e=>{
+ const option=e.target.closest('[data-dropdown-option]'),toggle=e.target.closest('[data-dropdown-toggle]');
+ if(e.key==='Escape'&&(option||toggle)){e.preventDefault();const filter=(option||toggle).closest('.desktop-filter');closeFilterDropdowns();filter?.querySelector('.filter-trigger')?.focus();return}
+ if(e.key!=='ArrowDown'&&e.key!=='ArrowUp')return;
+ if(toggle){e.preventDefault();const menu=toggle.nextElementSibling;if(menu.hidden){toggle.click();return}const selected=menu.querySelector('[aria-selected="true"]');(e.key==='ArrowDown'?selected||menu.querySelector('[role="option"]'):menu.querySelector('[role="option"]:last-child'))?.focus();return}
+ if(option){e.preventDefault();const options=[...option.closest('[role="listbox"]').querySelectorAll('[role="option"]')],index=options.indexOf(option),next=(index+(e.key==='ArrowDown'?1:-1)+options.length)%options.length;options[next].focus()}
 });
 $('#main').addEventListener('submit',event=>{if(event.target.id==='downloadUrlForm'){event.preventDefault();discoverDownloads(1,$('#downloadUrlInput')?.value||'')}});
 $('#main').addEventListener('paste',event=>{if(!event.target.closest('#downloadUrlInput'))return;setTimeout(()=>{const input=$('#downloadUrlInput');if(input?.value.trim())discoverDownloads(1,input.value)},0)});

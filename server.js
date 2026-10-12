@@ -20,7 +20,7 @@ const shareStore=createShareStore();
 const publicFiles=new Set([
  '/library.html','/manifest.webmanifest','/service-worker.js',
  '/css/styles.css',
- '/js/app.js','/js/importer.js','/js/share.js','/js/storage.js','/js/utils.js',
+ '/js/app.js','/js/backup.js','/js/importer.js','/js/library-filter.js','/js/share.js','/js/storage.js','/js/utils.js',
  '/icons/git.svg','/icons/sun.svg','/icons/moon.svg','/icons/android/icon-192.png','/icons/android/icon-512.png','/icons/apple/AppIcon-180.png'
 ]);
 const types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.webmanifest':'application/manifest+json; charset=utf-8','.svg':'image/svg+xml','.png':'image/png'};
@@ -174,14 +174,14 @@ const server=http.createServer(async(request,response)=>{
      playlistPaging:collection.playlistPaging,
      truncated:collection.truncated||!!page?.truncated,
      refetchOnOpen:true,
-     ...(collection.warning?{mediaWarning:collection.warning}:{})
+     ...(collection.warning?{mediaWarning:'Some media could not be loaded.'}:{})
     };
    }else if(page){
     result=page;
-    if(knownCollection&&collectionError)result={...page,refetchOnOpen:true,mediaWarning:`yt-dlp could not list every video: ${collectionError.message}`};
+    if(knownCollection&&collectionError){console.warn('Could not load all media from a collection:',collectionError);result={...page,refetchOnOpen:true,mediaWarning:'Some media could not be loaded.'}}
    }else throw collectionError||pageError||new Error('Could not preview this public URL.');
    send(response,200,result);
-  }catch(error){send(response,error.status||422,{error:error.message||'Page extraction failed.'})}
+  }catch(error){console.warn('Page preview failed:',error);send(response,error.status||422,{error:'Could not prepare this page preview.'})}
   return;
  }
  if(url.pathname==='/api/playlist'){
@@ -203,9 +203,9 @@ const server=http.createServer(async(request,response)=>{
     hasMore:collection.hasMore,
     playlistPaging:collection.playlistPaging,
     truncated:collection.truncated,
-    ...(collection.warning?{mediaWarning:collection.warning}:{})
+    ...(collection.warning?{mediaWarning:'Some media could not be loaded.'}:{})
    });
-  }catch(error){send(response,error.status||422,{error:error.message||'Video-list discovery failed.'})}
+  }catch(error){console.warn('Additional media lookup failed:',error);send(response,error.status||422,{error:'Could not load media from this link.'})}
   return;
  }
  if(url.pathname==='/api/video/resolve'){
@@ -215,7 +215,7 @@ const server=http.createServer(async(request,response)=>{
    const payload=await readJson(request);
    if(typeof payload.url!=='string'||payload.url.length>2048){send(response,400,{error:'Provide a video URL shorter than 2048 characters.'});return}
    send(response,200,{media:await resolveVideo(payload.url)});
-  }catch(error){send(response,error.status||422,{error:error.message||'Could not find a playable video.'})}
+  }catch(error){console.warn('Video preparation failed:',error);send(response,error.status||422,{error:'Could not prepare this video.'})}
   return;
  }
  if(url.pathname==='/api/video/download'){

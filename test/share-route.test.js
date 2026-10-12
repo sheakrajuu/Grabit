@@ -35,6 +35,22 @@ async function startServer(t){
  throw new Error('Grabit server did not start in time.');
 }
 
+test('serves the local backup validator module to the application',async t=>{
+ const baseUrl=await startServer(t);
+ const response=await fetch(`${baseUrl}/js/backup.js`);
+ assert.equal(response.status,200);
+ assert.match(response.headers.get('content-type'),/javascript/);
+ assert.match(await response.text(),/inspectLibraryBackup/);
+});
+
+test('serves the content-type filter module to the application',async t=>{
+ const baseUrl=await startServer(t);
+ const response=await fetch(`${baseUrl}/js/library-filter.js`);
+ assert.equal(response.status,200);
+ assert.match(response.headers.get('content-type'),/javascript/);
+ assert.match(await response.text(),/matchesContentType/);
+});
+
 test('share routes accept and return opaque ciphertext only, then consume it',async t=>{
  const baseUrl=await startServer(t);
  const plaintext='private-library-content-must-not-be-stored';
