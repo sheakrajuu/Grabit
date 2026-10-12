@@ -8,7 +8,10 @@ test('creates and reads a compressed share link without changing exported librar
  const link=await createLibraryShareLink(library,'https://grabit.example/library.html?watch=item-1&page=2#old-route');
  assert.equal(hasLibraryShareLink(link),true);
  assert.equal(new URL(link).searchParams.has('watch'),false);
- assert.equal(new URL(link).hash.startsWith('#grabit-share='),true);
+ const params=new URLSearchParams(new URL(link).hash.slice(1));
+ assert.equal(params.has('grabit-share-data'),true);
+ assert.equal(params.has('grabit-share-key'),true);
+ assert.equal(params.has('grabit-share-iv'),true);
  assert.deepEqual(await readLibraryShareLink(link),library);
  assert.deepEqual(await readLibraryShareLink(new URL(link).hash),library);
 });
@@ -54,22 +57,51 @@ test('multi-item share data contains only selected items without collections or 
 
 test('creates and reads a short server-backed share link',async()=>{
  const originalFetch=globalThis.fetch;
+ let encryptedBytes;
  globalThis.fetch=async(input,options)=>{
   const url=new URL(input);
   if(options?.method==='POST'){
    assert.equal(url.pathname,'/api/shares');
-   assert.deepEqual(JSON.parse(options.body),library);
+   assert.equal(url.hash,'');
+   assert.equal(options.headers['content-type'],'application/octet-stream');
+   encryptedBytes=Buffer.from(options.body);
+   assert.notDeepEqual(encryptedBytes,Buffer.from(JSON.stringify(library)));
+   assert.equal(encryptedBytes.includes(Buffer.from('Stored image')),false);
    return new Response(JSON.stringify({id:'abcdefghijklmnop'}),{status:201,headers:{'content-type':'application/json'}});
   }
   assert.equal(url.pathname,'/api/shares/abcdefghijklmnop');
-  return new Response(JSON.stringify(library),{headers:{'content-type':'application/json'}});
+  return new Response(encryptedBytes,{headers:{'content-type':'application/octet-stream'}});
  };
  try{
   const link=await createShortLibraryShareLink(library,'https://grabit.example/library.html?watch=item-1#old-route');
-  assert.equal(link,'https://grabit.example/s/abcdefghijklmnop');
+  const params=new URLSearchParams(new URL(link).hash.slice(1));
+  assert.equal(new URL(link).pathname,'/');
+  assert.equal(params.get('s'),'abcdefghijklmnop');
+  assert.ok(params.get('k'));
+  assert.ok(params.get('v'));
+  assert.ok(link.length<120);
   assert.equal(hasLibraryShareLink(link),true);
   assert.deepEqual(await readLibraryShareLink(link),library);
-  assert.deepEqual(await readLibraryShareLink('https://grabit.example/library.html#grabit-share-id=abcdefghijklmnop'),library);
+ }finally{globalThis.fetch=originalFetch}
+});
+
+test('encrypted shares preserve uploaded video data for the recipient',async()=>{
+ const originalFetch=globalThis.fetch;
+ const videoLibrary={...library,items:[{id:'video-1',type:'video',title:'Uploaded video',sectionIds:[],media:[{type:'video',mimeType:'video/mp4',size:4,storedDataUrl:'data:video/mp4;base64,AQIDBA=='}]}]};
+ let ciphertext;
+ globalThis.fetch=async(_input,options)=>{
+  if(options?.method==='POST'){
+   ciphertext=Buffer.from(options.body);
+   assert.equal(ciphertext.includes(Buffer.from('data:video/mp4')),false);
+   return new Response(JSON.stringify({id:'abcdefghijklmnop'}),{status:201,headers:{'content-type':'application/json'}});
+  }
+  return new Response(ciphertext,{headers:{'content-type':'application/octet-stream'}});
+ };
+ try{
+  const link=await createShortLibraryShareLink(videoLibrary,'https://grabit.example/library.html');
+  const imported=await readLibraryShareLink(link);
+  assert.equal(imported.items[0].type,'video');
+  assert.equal(imported.items[0].media[0].storedDataUrl,'data:video/mp4;base64,AQIDBA==');
  }finally{globalThis.fetch=originalFetch}
 });
 
@@ -94,7 +126,7 @@ test('reports unavailable short-link responses and rejects invalid returned IDs'
   ?new Response(JSON.stringify({id:'bad'}),{status:201,headers:{'content-type':'application/json'}})
   :new Response(JSON.stringify({error:'This share link has already been used.'}),{status:404,headers:{'content-type':'application/json'}});
  try{
-  await assert.rejects(readLibraryShareLink('https://grabit.example/s/abcdefghijklmnop'),/already been used/);
+  await assert.rejects(readLibraryShareLink('https://grabit.example/s/abcdefghijklmnop#grabit-share-key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&grabit-share-iv=AAAAAAAAAAAAAAAA'),/already been used/);
   await assert.rejects(createShortLibraryShareLink(library,'https://grabit.example/'),/invalid share link/);
  }finally{globalThis.fetch=originalFetch}
 });

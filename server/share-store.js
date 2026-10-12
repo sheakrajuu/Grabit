@@ -1,7 +1,7 @@
 import {randomBytes} from 'node:crypto';
 
-export const MAX_SHARE_BYTES=30*1024*1024;
-const MAX_ACTIVE_SHARE_BYTES=128*1024*1024;
+export const MAX_SHARE_BYTES=80*1024*1024;
+const MAX_ACTIVE_SHARE_BYTES=256*1024*1024;
 
 export function createShareStore({idGenerator=()=>randomBytes(12).toString('base64url'),maxActiveBytes=MAX_ACTIVE_SHARE_BYTES}={}){
  const shares=new Map();
@@ -15,7 +15,7 @@ export function createShareStore({idGenerator=()=>randomBytes(12).toString('base
 
  return{
   create(data,bytes){
-   if(!Number.isSafeInteger(bytes)||bytes<0||bytes>MAX_SHARE_BYTES)throw Object.assign(new Error('Shared library exceeds the 30 MB limit.'),{status:413});
+   if(!Number.isSafeInteger(bytes)||bytes<0||bytes>MAX_SHARE_BYTES)throw Object.assign(new Error('Encrypted share exceeds the 80 MB limit.'),{status:413});
    if(activeBytes+bytes>maxActiveBytes)throw Object.assign(new Error('Share storage is temporarily full. Some links may not have been used yet.'),{status:503});
    let id;
    do{id=idGenerator()}while(shares.has(id));

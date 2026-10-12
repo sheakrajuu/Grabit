@@ -4,7 +4,7 @@ import http from 'node:http';
 import net from 'node:net';
 import {Readable} from 'node:stream';
 import {brotliCompressSync,deflateSync,gzipSync} from 'node:zlib';
-import {parsePage,bestSrcsetCandidate,resolvePublicAddress,createPinnedLookup,decompress,safeDownloadFilename,downloadPublicMedia,openPublicMedia,extractorLimits} from '../server/extractor.js';
+import {parsePage,bestSrcsetCandidate,srcsetCandidates,resolvePublicAddress,createPinnedLookup,decompress,safeDownloadFilename,downloadPublicMedia,openPublicMedia,extractorLimits} from '../server/extractor.js';
 import {isVideoCollectionUrl,parseResolvedVideo,parseYtDlpOutput,parseYtDlpPlaylist,ytDlpTargetUrl} from '../server/playlist.js';
 import {createPublicProxy} from '../server/public-proxy.js';
 import {videoEmbedUrl,socialMediaEmbed,videoCollectionTitle} from '../js/utils.js';
@@ -80,6 +80,19 @@ test('parses public browser-playable streams from yt-dlp metadata',()=>{
   assert.throws(()=>parseResolvedVideo('{"url":"file:///private/video"}','https://video.example/watch/1'),/browser-playable/);
 });
 
+test('orders downloadable video qualities from highest to lowest',()=>{
+  const media=parseResolvedVideo(JSON.stringify({
+   title:'Quality choices',webpage_url:'https://video.example/watch/2',url:'https://cdn.example/high.mp4',ext:'mp4',format_id:'high',
+   formats:[
+    {format_id:'360',ext:'mp4',width:640,height:360,vcodec:'h264',acodec:'aac',filesize:1000},
+    {format_id:'1080',ext:'mp4',width:1920,height:1080,vcodec:'h264',acodec:'aac',filesize:5000},
+    {format_id:'video-only',ext:'mp4',width:3840,height:2160,vcodec:'h264',acodec:'none',filesize:8000}
+   ]
+  }),'https://video.example/watch/2');
+  assert.deepEqual(media.formatOptions.map(format=>format.formatId),['1080','360']);
+  assert.equal(media.formatOptions[0].height,1080);
+});
+
 test('treats unavailable flat-playlist titles as empty for metadata enrichment',()=>{
  const result=parseYtDlpOutput(`"NA"\thttps://xhamster.com/videos/untitled\tNA\tNA`);
  assert.equal(result.media[0].alt,'');
@@ -132,12 +145,32 @@ test('prefers the highest-resolution responsive image candidate',()=>{
  assert.equal(page.media.length,1);
  assert.equal(page.media[0].url,'https://example.test/large.jpg');
  assert.equal(page.media[0].width,1800);
+ assert.deepEqual(page.media[0].qualityOptions.map(candidate=>candidate.width),[1800,900,320]);
+ assert.deepEqual(srcsetCandidates('/low.jpg 320w, /high.jpg 1280w','https://example.test/').map(candidate=>candidate.url),['https://example.test/high.jpg','https://example.test/low.jpg']);
  assert.deepEqual(bestSrcsetCandidate('/2x.jpg 2x, /3x.jpg 3x','https://example.test/'),{
   url:'https://example.test/3x.jpg',density:3
  });
  assert.deepEqual(bestSrcsetCandidate('https://cdn.example/s(w:320,h:180),q:90/first.jpg 320w, https://cdn.example/second.jpg 640w','https://example.test/'),{
   url:'https://cdn.example/second.jpg',width:640
  });
+});
+
+test('keeps all static images found in social-style metadata and page markup',()=>{
+ const page=parsePage('<meta property="og:image" content="/carousel-1.jpg"><meta property="og:image" content="/carousel-2.jpg"><img src="/carousel-3.jpg">','https://social.example/post/1');
+ assert.deepEqual(page.media.map(media=>media.url),[
+  'https://social.example/carousel-3.jpg',
+  'https://social.example/carousel-1.jpg',
+  'https://social.example/carousel-2.jpg'
+ ]);
+});
+
+test('keeps multiple carousel images even when a social page also advertises one video',()=>{
+ const page=parsePage('<meta property="og:image" content="/carousel-1.jpg"><meta property="og:image" content="/carousel-2.jpg"><meta property="og:video" content="/clip.mp4">','https://social.example/post/2');
+ assert.deepEqual(page.media.map(media=>media.url),[
+  'https://social.example/carousel-1.jpg',
+  'https://social.example/carousel-2.jpg',
+  'https://social.example/clip.mp4'
+ ]);
 });
 
 test('returns media limit and reports truncation when a page exceeds the cap',()=>{

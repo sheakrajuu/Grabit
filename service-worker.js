@@ -1,10 +1,10 @@
-const CACHE_NAME='grabit-shell-v64';
+const CACHE_NAME='grabit-shell-v68';
 const APP_SHELL=[
  './',
  './library.html',
  './manifest.webmanifest',
- './css/styles.css?v=46',
- './js/app.js?v=63',
+ './css/styles.css?v=48',
+ './js/app.js?v=67',
  './js/importer.js',
  './js/share.js',
  './js/storage.js',

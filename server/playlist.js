@@ -157,7 +157,20 @@ export function parseResolvedVideo(output,sourceUrl){
  const pageUrl=publicHttpUrl(info.webpage_url)||publicHttpUrl(sourceUrl);
  if(!playbackUrl||!pageUrl)throw new Error('No browser-playable video stream was exposed for this URL.');
  const extension=typeof info.ext==='string'&&/^[a-z0-9]{2,5}$/i.test(info.ext)?info.ext.toLowerCase():'mp4';
- const formatId=typeof info.format_id==='string'&&/^[\w.-]{1,80}$/.test(info.format_id)?info.format_id:'';
+ const formatId=typeof info.format_id==='string'&&/^[\w.+-]{1,80}$/.test(info.format_id)?info.format_id:'';
+ const formatOptions=Array.isArray(info.formats)?info.formats.filter(format=>
+  format&&typeof format.format_id==='string'&&/^[\w.+-]{1,80}$/.test(format.format_id)
+   &&format.vcodec!=='none'&&format.acodec!=='none'
+   &&typeof format.ext==='string'&&/^[a-z0-9]{2,5}$/i.test(format.ext)
+ ).map(format=>({
+  formatId:format.format_id,
+  extension:format.ext.toLowerCase(),
+  ...(Number.isFinite(format.width)&&format.width>0?{width:format.width}:{}),
+  ...(Number.isFinite(format.height)&&format.height>0?{height:format.height}:{}),
+  ...(Number.isFinite(format.filesize)&&format.filesize>0?{filesize:format.filesize}:{})
+ })).sort((a,b)=>(b.height||0)-(a.height||0)||(b.width||0)-(a.width||0)||(b.filesize||0)-(a.filesize||0))
+  .filter((format,index,formats)=>formats.findIndex(candidate=>candidate.formatId===format.formatId)===index)
+  .slice(0,24):[];
  return{
   type:'video',
   url:pageUrl,
@@ -167,7 +180,8 @@ export function parseResolvedVideo(output,sourceUrl){
   thumbnailUrl:publicHttpUrl(info.thumbnail),
   alt:typeof info.title==='string'?info.title.slice(0,500):'',
   extension,
-  formatId
+  formatId,
+  ...(formatOptions.length>1?{formatOptions}:{})
  };
 }
 

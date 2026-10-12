@@ -67,6 +67,21 @@ async function readJson(request,maxBytes=MAX_BODY_BYTES,limitMessage='Request bo
  try{return JSON.parse(Buffer.concat(chunks).toString('utf8'))}catch{throw Object.assign(new Error('Request body must contain valid JSON.'),{status:400})}
 }
 
+async function readBinary(request,maxBytes){
+ const chunks=[];let length=0;
+ for await(const chunk of request){
+  length+=chunk.length;
+  if(length>maxBytes)throw Object.assign(new Error('Encrypted share exceeds the 80 MB limit.'),{status:413});
+  chunks.push(chunk);
+ }
+ return Buffer.concat(chunks,length);
+}
+
+function sendBinary(response,status,payload){
+ response.writeHead(status,{'content-type':'application/octet-stream','content-length':payload.length,'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'});
+ response.end(payload);
+}
+
 function allowShareCreation(request){
  const key=`share:${getClientAddress(request)}`,now=Date.now();let bucket=buckets.get(key);
  if(!bucket||now-bucket.start>RATE_WINDOW_MS){bucket={start:now,count:0};buckets.set(key,bucket)}
@@ -93,12 +108,10 @@ const server=http.createServer(async(request,response)=>{
   if(request.method!=='POST'){send(response,405,{error:'Use POST to create a share link.'});return}
   if(!allowShareCreation(request)){send(response,429,{error:'Too many share links. Wait a minute and retry.'});return}
   try{
-   const data=await readJson(request,MAX_SHARE_BYTES,'Shared library exceeds the 30 MB limit.');
-   if(data?.format!=='grabit-library'||data.version!==1||!Array.isArray(data.items)||!Array.isArray(data.sections)){
-    send(response,400,{error:'This is not a supported Grabit library.'});return;
-   }
-   const bytes=Buffer.byteLength(JSON.stringify(data));
-   const share=shareStore.create(data,bytes);
+   if(request.headers['content-type']!=='application/octet-stream'){send(response,415,{error:'Share data must be encrypted in the browser before upload.'});return}
+   const ciphertext=await readBinary(request,MAX_SHARE_BYTES);
+   if(ciphertext.length<29){send(response,400,{error:'Encrypted share data is incomplete.'});return}
+   const share=shareStore.create(ciphertext,ciphertext.length);
    send(response,201,share);
   }catch(error){send(response,error.status||400,{error:error.message||'Could not create a share link.'})}
   return;
@@ -106,9 +119,9 @@ const server=http.createServer(async(request,response)=>{
  const shareMatch=url.pathname.match(/^\/api\/shares\/([A-Za-z0-9_-]{16})$/);
  if(shareMatch){
   if(request.method==='GET'){
-   const data=shareStore.get(shareMatch[1]);
-   if(!data){send(response,404,{error:'This share link has already been used or is no longer available. Ask the sender to make a new link.'});return}
-   send(response,200,data);
+   const ciphertext=shareStore.get(shareMatch[1]);
+   if(!ciphertext){send(response,404,{error:'This share link has already been used or is no longer available. Ask the sender to make a new link.'});return}
+   sendBinary(response,200,ciphertext);
    return;
   }
   if(request.method==='DELETE'){
@@ -116,7 +129,7 @@ const server=http.createServer(async(request,response)=>{
    response.writeHead(204,{'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'}).end();
    return;
   }
-  send(response,405,{error:'Use GET to read a share link or DELETE to consume it.'});
+  send(response,405,{error:'Use GET to retrieve encrypted share data or DELETE to consume it.'});
   return;
  }
  const shortLinkMatch=url.pathname.match(/^\/s\/([A-Za-z0-9_-]{16})$/);
@@ -212,12 +225,17 @@ const server=http.createServer(async(request,response)=>{
   try{
    const mediaUrl=url.searchParams.get('url')||'';
    if(mediaUrl.length>2048){send(response,400,{error:'Provide a video URL shorter than 2048 characters.'});return}
+   const requestedFormat=url.searchParams.get('format')||'';
+   if(requestedFormat&&!/^[\w.+-]{1,80}$/.test(requestedFormat)){send(response,400,{error:'The selected video quality is invalid.'});return}
    const media=await resolveVideo(mediaUrl);
-   child=await startVideoDownload(mediaUrl,media.formatId);
+   const selectedFormat=requestedFormat?media.formatOptions?.find(format=>format.formatId===requestedFormat):null;
+   if(requestedFormat&&!selectedFormat){send(response,400,{error:'That video quality is no longer available. Find the media again and choose a listed quality.'});return}
+   child=await startVideoDownload(mediaUrl,selectedFormat?.formatId||media.formatId);
    const downloadTitle=(url.searchParams.get('title')||media.alt||'video').slice(0,240);
-   const filename=safeDownloadFilename(`${downloadTitle}.${media.extension}`);
+   const extension=selectedFormat?.extension||media.extension;
+   const filename=safeDownloadFilename(`${downloadTitle}.${extension}`);
    const contentTypes={mp4:'video/mp4',webm:'video/webm',mov:'video/quicktime'};
-   response.writeHead(200,{'content-type':contentTypes[media.extension]||'application/octet-stream','content-disposition':`attachment; filename="${filename.replace(/["\\]/g,'_')}"; filename*=UTF-8''${encodeURIComponent(filename)}`,'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'});
+   response.writeHead(200,{'content-type':contentTypes[extension]||'application/octet-stream','content-disposition':`attachment; filename="${filename.replace(/["\\]/g,'_')}"; filename*=UTF-8''${encodeURIComponent(filename)}`,'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'});
    response.on('close',()=>{if(!response.writableFinished)child.kill()});
    child.stdout.pipe(response);
    child.on('error',error=>{console.error('Video download process failed:',error);response.destroy(error)});

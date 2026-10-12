@@ -29,6 +29,6 @@ export async function resolveVideoUrl(url){
  return payload.media;
 }
 
-export function videoDownloadUrl(url,title='video'){
- return`/api/video/download?url=${encodeURIComponent(url)}&title=${encodeURIComponent(title)}`;
+export function videoDownloadUrl(url,title='video',formatId=''){
+ return`/api/video/download?url=${encodeURIComponent(url)}&title=${encodeURIComponent(title)}${formatId?`&format=${encodeURIComponent(formatId)}`:''}`;
 }

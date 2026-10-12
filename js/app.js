@@ -4,9 +4,10 @@ import {previewUrl,discoverPlaylistUrl,resolveVideoUrl,videoDownloadUrl} from '.
 import {consumeShortLibraryShareLink,createItemShareData,createItemsShareData,createShortLibraryShareLink,hasLibraryShareLink,isShortLibraryShareLink,readLibraryShareLink} from './share.js';
 
 'use strict';
-const V={view:'inbox',sectionId:null,q:'',type:'all',sort:'recent',libraryPage:0,selectMode:false,selected:new Set(),mediaIndex:-1,dialogItemId:null,dialogMode:'view',editReturnToViewer:false,items:[],sections:[],downloads:[],downloadPreview:null,downloadFilter:'all',downloadError:'',downloadUrl:'',installPrompt:null,preview:null,previewRequestId:0,showingHiddenMedia:false,watch:null,watchScrollTimer:null,watchResizeObserver:null,shareData:null,pendingBackup:null,pendingShareLink:'',task:null,undo:null};
+const V={view:'inbox',sectionId:null,q:'',type:'all',sort:'recent',filterSectionId:'',libraryPage:0,selectMode:false,selected:new Set(),mediaIndex:-1,dialogItemId:null,dialogMode:'view',editReturnToViewer:false,dialogReturnFocus:null,items:[],sections:[],downloads:[],downloadPreview:null,downloadFilter:'all',downloadError:'',downloadUrl:'',installPrompt:null,preview:null,previewRequestId:0,showingHiddenMedia:false,watch:null,watchScrollTimer:null,watchResizeObserver:null,shareData:null,pendingBackup:null,pendingShareLink:'',task:null,undo:null};
 const LIBRARY_PAGE_SIZE=60;
 const UNDO_WINDOW_MS=8000;
+const MAX_VIDEO_UPLOAD_BYTES=50*1024*1024;
 let appUpdatePending=false;
 let reloadingForAppUpdate=false;
 const icon=d=>`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
@@ -64,8 +65,9 @@ function applyTheme(theme,persist=false){const selected=theme==='light'?'light':
 async function refreshLibrary(){const data=await loadLibrary();V.items=data.items;V.sections=data.sections}
 function loadDownloadHistory(){try{const stored=JSON.parse(localStorage.getItem('grabit-download-history')||'[]');V.downloads=Array.isArray(stored)?stored.filter(entry=>entry&&typeof entry==='object'&&(typeof entry.url==='string'||typeof entry.localMediaId==='string')).slice(0,200):[]}catch(error){console.warn('Could not read download history:',error);V.downloads=[]}}
 function storeDownloadHistory(){try{localStorage.setItem('grabit-download-history',JSON.stringify(V.downloads.slice(0,200)))}catch(error){reportError('Could not save download history',error)}}
-function show(html,wide=false){$('#bx').innerHTML=html;$('#bx').classList.toggle('wide',wide);$('#md').classList.remove('image-view-mode');$('#md').classList.add('on');const focus=$('#bx input,#bx textarea,#bx select,#bx button');focus?.focus()}
-function hide(){const active=document.activeElement;if(V.task?.kind==='preview')V.previewRequestId++;if(V.task)cancelTask();$('#md').classList.remove('on','image-view-mode');$('#bx').innerHTML='';V.dialogItemId=null;V.dialogMode='view';V.editReturnToViewer=false;if(active&&active.matches('input,textarea,select'))$('#add').focus();reloadForAppUpdate()}
+function show(html,wide=false){if(!$('#md').classList.contains('on'))V.dialogReturnFocus=document.activeElement;$('#bx').innerHTML=html;$('#bx').classList.toggle('wide',wide);$('#md').classList.remove('image-view-mode');$('#md').classList.add('on');$('#bx').querySelector('h2')?.setAttribute('id','dialog-title');if($('#bx h2'))$('#bx').setAttribute('aria-labelledby','dialog-title');else $('#bx').removeAttribute('aria-labelledby');const focus=$('#bx input:not([type="hidden"]),#bx textarea,#bx select,#bx button');(focus||$('#bx')).focus()}
+function hide(){const returnFocus=V.dialogReturnFocus;if(V.task?.kind==='preview')V.previewRequestId++;if(V.task)cancelTask();$('#md').classList.remove('on','image-view-mode');$('#bx').innerHTML='';V.dialogItemId=null;V.dialogMode='view';V.editReturnToViewer=false;V.dialogReturnFocus=null;if(returnFocus?.isConnected)returnFocus.focus();reloadForAppUpdate()}
+function focusCardMenuButton(id){[...document.querySelectorAll('[data-card-menu]')].find(button=>button.dataset.cardMenu===id)?.focus()}
 function reloadForAppUpdate(){
  if(!appUpdatePending||reloadingForAppUpdate||$('#md').classList.contains('on'))return;
  if([...document.querySelectorAll('input[type="file"]')].some(input=>input.files?.length))return;
@@ -143,6 +145,7 @@ function matchingItems(){
   if(V.view==='favorites'&&!i.isFavorite)return false;
   if(V.view==='downloads'&&!V.downloads.some(entry=>entry.itemId===i.id))return false;
   if(V.view==='section'&&!(i.sectionIds||[]).includes(V.sectionId))return false;
+  if(V.filterSectionId&&!(i.sectionIds||[]).includes(V.filterSectionId))return false;
   if(V.type!=='all'&&i.type!==V.type)return false;
   if(q&&!`${i.title} ${i.description} ${i.notes} ${i.sourceDomain} ${i.sourceUrl} ${i.originalUrl}`.toLocaleLowerCase().includes(q))return false;
   return true;
@@ -175,7 +178,7 @@ function closeCardMenus(){
 }
 function titleForView(){return V.view==='section'?sectionName(V.sectionId):({inbox:'Inbox',favorites:'Favorites',recent:'Recently added',downloads:'Download',archived:'Archived'}[V.view]||'Inbox')}
 function render(){
- renderNav();$('#ttl').textContent=titleForView();
+ renderNav();$('#ttl').textContent=titleForView();$('#q').hidden=V.view==='downloads';
  if(V.view==='downloads'){renderDownloadHistory();return}
  const items=matchingItems();const main=$('#main');
  const pageCount=Math.ceil(items.length/LIBRARY_PAGE_SIZE);
@@ -183,18 +186,23 @@ function render(){
  const visibleItems=items.slice(V.libraryPage*LIBRARY_PAGE_SIZE,(V.libraryPage+1)*LIBRARY_PAGE_SIZE);
  const types=['all','bookmark','image','video','gallery','playlist','note'];
  const typeLabels={all:'All types',bookmark:'Websites',image:'Images',video:'Videos',gallery:'Galleries',playlist:'Playlists',note:'Notes'};
- const actions=V.selectMode?`<button class="b" data-bulk="selectAll">Select all</button>${V.selected.size>1?'<button class="b" data-bulk="share">Share contents</button>':''}<button class="b" data-bulk="inbox">Move to Inbox</button><button class="b d" data-bulk="delete">Delete</button><button class="b" data-bulk="done">Done</button>`:'<button class="b" id="selectMode">Select</button>';
- const toolbar=`<div class="tools"><select class="in" id="typeFilter" aria-label="Filter by content type">${types.map(t=>`<option value="${t}"${V.type===t?' selected':''}>${typeLabels[t]}</option>`).join('')}</select><select class="in" id="sortOrder" aria-label="Sort content"><option value="recent"${V.sort==='recent'?' selected':''}>Recently added</option><option value="oldest"${V.sort==='oldest'?' selected':''}>Oldest added</option><option value="alphabetical"${V.sort==='alphabetical'?' selected':''}>Alphabetical</option><option value="updated"${V.sort==='updated'?' selected':''}>Recently updated</option></select>${actions}</div>`;
+ const filterActive=Boolean(V.q.trim()||V.type!=='all'||V.filterSectionId);
+ const actions=V.selectMode?`<span class="selection-count" role="status" aria-live="polite">${V.selected.size} selected</span>${items.length?'<button class="b" data-bulk="selectAll">Select all</button>':''}${V.selected.size>1?'<button class="b" data-bulk="share">Share contents</button>':''}${V.selected.size&&V.view!=='inbox'?'<button class="b" data-bulk="inbox">Move to Inbox</button>':''}${V.selected.size?'<button class="b d" data-bulk="delete">Delete</button>':''}<button class="b" data-bulk="done">Done</button>`:items.length?'<button class="b" id="selectMode">Select</button>':'';
+ const sectionFilter=V.view==='inbox'||V.view==='section'?'':`<select class="in" id="sectionFilter" aria-label="Filter by section"><option value="">All sections</option>${V.sections.map(section=>`<option value="${esc(section.id)}"${V.filterSectionId===section.id?' selected':''}>${esc(section.name)}</option>`).join('')}</select>`;
+ const sortFilter=V.view==='recent'?'':`<select class="in" id="sortOrder" aria-label="Sort content"><option value="recent"${V.sort==='recent'?' selected':''}>Recently added</option><option value="oldest"${V.sort==='oldest'?' selected':''}>Oldest added</option><option value="alphabetical"${V.sort==='alphabetical'?' selected':''}>Alphabetical</option><option value="updated"${V.sort==='updated'?' selected':''}>Recently updated</option></select>`;
+ const toolbar=`<div class="tools"><select class="in" id="typeFilter" aria-label="Filter by content type">${types.map(t=>`<option value="${t}"${V.type===t?' selected':''}>${typeLabels[t]}</option>`).join('')}</select>${sortFilter}${sectionFilter}${filterActive?'<button class="b" data-clear-filters>Clear filters</button>':''}${actions}</div>`;
  const empty=V.view==='inbox'?'Your Inbox is empty. Save a link, write a note, or add an image to get started.':V.view==='favorites'?'Items you favorite will appear here.':V.view==='archived'?'Archived items will appear here.':V.view==='section'?'This section is empty. Add content or move items here.':'Your Inbox is empty. Save a link, write a note, or add an image to get started.';
  const pagination=pageCount>1?`<nav class="library-pagination" aria-label="Library pages"><button class="b" data-library-page="${V.libraryPage-1}"${V.libraryPage===0?' disabled':''}>Previous</button><span>Showing ${V.libraryPage*LIBRARY_PAGE_SIZE+1}–${Math.min((V.libraryPage+1)*LIBRARY_PAGE_SIZE,items.length)} of ${items.length}</span><button class="b" data-library-page="${V.libraryPage+1}"${V.libraryPage===pageCount-1?' disabled':''}>Next</button></nav>`:'';
- main.innerHTML=toolbar+(items.length?`<div class="grid">${visibleItems.map(card).join('')}</div>${pagination}`:`<div class="empty">${V.q?`No results for “${esc(V.q)}”.`:esc(empty)}</div>`);
+ const emptyMessage=filterActive?'No items match these filters.':empty;
+ main.innerHTML=toolbar+(items.length?`<div class="grid">${visibleItems.map(card).join('')}</div>${pagination}`:`<div class="empty">${V.q?`No results for “${esc(V.q)}”.`:esc(emptyMessage)}${filterActive?'<p><button class="b" data-clear-filters>Clear filters</button></p>':''}</div>`);
 }
 function imageFile(file){return new Promise((resolve,reject)=>{if(!file||!file.type.startsWith('image/')){reject(new Error('Choose a valid image file.'));return}if(file.size>12*1024*1024){reject(new Error('Images must be smaller than 12 MB for local storage.'));return}const reader=new FileReader();reader.onerror=()=>reject(new Error('Could not read the selected image.'));reader.onload=()=>{const image=new Image();image.onerror=()=>reject(new Error('The selected file is not a readable image.'));image.onload=()=>{const scale=Math.min(1,1600/Math.max(image.width,image.height)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.width*scale));canvas.height=Math.max(1,Math.round(image.height*scale));const ctx=canvas.getContext('2d');if(!ctx){reject(new Error('Image processing is unavailable.'));return}ctx.drawImage(image,0,0,canvas.width,canvas.height);resolve({data:canvas.toDataURL('image/jpeg',.84),width:canvas.width,height:canvas.height})};image.src=reader.result};reader.readAsDataURL(file)})}
+function videoFile(file){return new Promise((resolve,reject)=>{if(!file?.type.startsWith('video/')){reject(new Error('Choose a valid video file.'));return}if(file.size>MAX_VIDEO_UPLOAD_BYTES){reject(new Error('Videos must be 50 MB or smaller.'));return}const reader=new FileReader();reader.onerror=()=>reject(new Error('Could not read the selected video.'));reader.onload=()=>resolve({data:reader.result,mimeType:file.type,size:file.size});reader.readAsDataURL(file)})}
 function emptyItem({type,title,sourceUrl='',media=[],thumbnailUrl='',notes='',description='',sectionIds=[]}){
  const now=new Date().toISOString();return{id:uid(),type,title:title.trim()||host(sourceUrl)||'Untitled',description,notes,sourceUrl,originalUrl:sourceUrl,canonicalUrl:normalized(sourceUrl),sourceDomain:host(sourceUrl),thumbnailUrl,media:media.map((m,position)=>({...m,id:m.id||uid(),position})),sectionIds,isFavorite:false,isArchived:false,inbox:sectionIds.length===0,savedAt:now,updatedAt:now};
 }
 function addDialog(){
- show(`<b>Add to your library</b><p class="hint">Save links, write a note, or add images.</p><div class="row"><button class="b p" data-action="importDialog">Save links</button><button class="b" data-action="noteDialog">New note</button><button class="b" data-action="uploadDialog">Add images</button><button class="b" data-action="close">Cancel</button></div>`);
+ show(`<b>Add to your library</b><p class="hint">Save links, write a note, or upload images and videos.</p><div class="row"><button class="b p" data-action="importDialog">Save links</button><button class="b" data-action="noteDialog">New note</button><button class="b" data-action="uploadDialog">Upload media</button><button class="b" data-action="close">Cancel</button></div>`);
 }
 function importDialog(){
  V.preview=null;
@@ -323,8 +331,9 @@ async function toggleMediaVisibility(id,url){
 function noteDialog(){
  show(`<b>New note</b><label for="noteTitle">Title</label><input class="in" id="noteTitle" maxlength="240" placeholder="Give your note a title"><label for="noteText">Note</label><textarea class="in" id="noteText" maxlength="10000" placeholder="Write your note here…"></textarea><label>Save to</label>${destinationOptions()}<div class="row"><button class="b p" data-action="saveNote">Save note</button><button class="b" data-action="close">Cancel</button></div>`);
 }
-function uploadDialog(){
- show(`<b>Add images</b><p class="hint">Images are compressed and saved in this browser. Available storage depends on your browser and device.</p>${V.droppedFiles?.length?`<p>${V.droppedFiles.length} ${V.droppedFiles.length===1?'image is':'images are'} ready to add.</p>`:''}<label for="imageFiles">Choose images</label><input class="in" id="imageFiles" type="file" accept="image/*" multiple><label>Save to</label>${destinationOptions()}<div class="row"><button class="b p" data-action="saveImages">Add images</button><button class="b" data-action="close">Cancel</button></div>`);
+function uploadDialog(droppedFiles=[]){
+ V.droppedFiles=droppedFiles;
+ show(`<b>Add media</b><p class="hint">Images are compressed; videos up to 50 MB each are saved in this browser. Available storage depends on your browser and device.</p>${V.droppedFiles?.length?`<p>${V.droppedFiles.length} ${V.droppedFiles.length===1?'file is':'files are'} ready to add.</p>`:''}<label for="imageFiles">Choose images or videos</label><input class="in" id="imageFiles" type="file" accept="image/*,video/*" multiple><label>Save to</label>${destinationOptions()}<div class="row"><button class="b p" data-action="saveImages">Add media</button><button class="b" data-action="close">Cancel</button></div>`);
 }
 function createSection(){show(`<b>New section</b><label for="newSectionName">Name</label><input class="in" id="newSectionName" maxlength="100" placeholder="e.g. Design ideas"><div class="row"><button class="b p" data-action="createSection">Create section</button><button class="b" data-action="close">Cancel</button></div>`)}
 async function saveNewSection(){
@@ -376,7 +385,7 @@ function downloadButton(item,media,label='Download',className='b media-download-
  const providerUrl=media.type==='video'&&(media.providerUrl||media.embedUrl)?`data-download-video="${esc(media.providerUrl||media.sourceUrl||media.url)}"`:'';
  return target||providerUrl?`<button class="${className}"${roleAttribute} ${providerUrl||target} data-download-title="${esc(item.title)}" data-download-type="${esc(media.type)}" data-download-thumb="${esc(media.thumbnailUrl||'')}" data-download-item="${esc(item.id)}">${label}</button>`:`<button class="${className}"${roleAttribute} disabled title="This provider embed does not expose a downloadable media file.">${label} unavailable</button>`;
 }
-async function downloadMedia(url,{itemId='',title='Media',type='image',thumbnailUrl='',ytDlp=false}={}){
+async function downloadMedia(url,{itemId='',title='Media',type='image',thumbnailUrl='',ytDlp=false,formatId=''}={}){
  if(!url){toast('This media has no downloadable source URL.');return}
  try{
   const local=url.startsWith('data:')||url.startsWith('blob:');
@@ -388,13 +397,13 @@ async function downloadMedia(url,{itemId='',title='Media',type='image',thumbnail
    filename=`${title.replace(/[<>:"/\\|?*\u0000-\u001f]/g,'_')||'media'}.${type==='video'?'mp4':'jpg'}`;
    anchor.href=objectUrl;anchor.download=filename;setTimeout(()=>URL.revokeObjectURL(objectUrl),60_000);
   }else{
-   anchor.href=ytDlp?videoDownloadUrl(url,title):`/api/download?url=${encodeURIComponent(url)}`;
+   anchor.href=ytDlp?videoDownloadUrl(url,title,formatId):`/api/download?url=${encodeURIComponent(url)}`;
    anchor.rel='noopener';
    if(ytDlp)anchor.target='_blank';
    filename=ytDlp?title||'video':host(url)||title||'media';
   }
   document.body.append(anchor);anchor.click();anchor.remove();
-  V.downloads.unshift({itemId,url,title,type,thumbnailUrl,filename,ytDlp,downloadedAt:new Date().toISOString()});V.downloads=V.downloads.slice(0,200);storeDownloadHistory();renderNav();toast(`Download started: ${filename}`);
+  V.downloads.unshift({itemId,url,title,type,thumbnailUrl,filename,ytDlp,formatId,downloadedAt:new Date().toISOString()});V.downloads=V.downloads.slice(0,200);storeDownloadHistory();renderNav();toast(`Download started: ${filename}`);
  }catch(error){console.error('Media download failed:',error);toast(error.message||'Could not download this media.')}
 }
 function renderDownloadHistory(){
@@ -402,10 +411,24 @@ function renderDownloadHistory(){
  const downloads=V.downloadPreview;
  const visibleMedia=downloads?downloads.media.filter(media=>V.downloadFilter==='all'||media.type===V.downloadFilter):[];
  const pageControls=downloads?.playlistPaging?`<div class="row download-page-controls" aria-label="Video list pages"><button class="b" data-download-page="${downloads.start-10}"${downloads.start<=1?' disabled':''}>Previous 10</button><span>Videos ${downloads.start}–${downloads.start+downloads.media.length-1}</span><button class="b" data-download-page="${downloads.start+10}"${downloads.hasMore?'':' disabled'}>Next 10</button></div>`:'';
- const content=downloads?visibleMedia.length?`<h2 class="download-heading">${esc(downloads.title)} <span>${visibleMedia.length} ${V.downloadFilter==='all'?'media '+(visibleMedia.length===1?'item':'items'):`${V.downloadFilter==='video'?'video':'image'} ${visibleMedia.length===1?'item':'items'}`}</span></h2>${pageControls}<p class="hint">Media with known dimensions appear in highest-resolution order. Some providers restrict access; login-only and protected media cannot be downloaded.</p>${downloads.warning?`<p class="hint" role="status">${esc(downloads.warning)}</p>`:''}${downloads.truncated?'<p class="hint" role="status">Only the first 500 media items are shown.</p>':''}<div class="download-discovery-grid">${visibleMedia.map((media,index)=>`<article class="download-discovery-card"><div class="download-discovery-thumb">${media.type==='video'&&(media.embedUrl&&!media.playbackUrl)?`<img src="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" alt="" loading="lazy" decoding="async">`:`${media.type==='video'?`<video controls src="${esc(media.playbackUrl||media.url)}" poster="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" playsinline preload="none"></video>`:`<img src="${esc(media.thumbnailUrl||media.url)}" alt="" loading="lazy" decoding="async">`}`}</div><div class="download-discovery-copy"><strong>${esc(media.type==='video'?'Video':'Image')} ${index+1}${index===0?' · highest listed quality':''}</strong><span>${media.width||media.height?`${media.width||'?'} × ${media.height||'?'} px · `:''}${esc(host(media.playbackUrl||media.url))}</span></div>${media.type==='video'&&(media.providerUrl||media.embedUrl)?`${!media.playbackUrl?`<button class="b" data-discovery-play="${index}">Try player</button>`:''}<button class="b p" data-discovery-download="${index}">Download with Grabit</button>`:media.embedUrl?`<p class="hint">This provider embed does not provide a downloadable media file.</p>`:`<button class="b p" data-discovery-download="${index}">Download${index===0?' highest listed quality':''}</button>`}</article>`).join('')}</div>`:`<div class="download-empty"><b>${downloads.media.length?'No '+(V.downloadFilter==='video'?'videos':'images')+' found in these results.':'No downloadable media was found.'}</b><p>${downloads.media.length?'Choose another media type or try a different URL.':'This page may only provide an embed or require sign-in. Grabit cannot bypass provider restrictions. Try a public page with directly accessible media.'}</p></div>`:'';
+ const content=downloads?visibleMedia.length?`<h2 class="download-heading">${esc(downloads.title)} <span>${visibleMedia.length} ${V.downloadFilter==='all'?'media '+(visibleMedia.length===1?'item':'items'):`${V.downloadFilter==='video'?'video':'image'} ${visibleMedia.length===1?'item':'items'}`}</span></h2>${pageControls}<p class="hint">Full-size results are sorted largest first. Some sites require sign-in or block downloads.</p>${downloads.warning?`<p class="hint" role="status">${esc(downloads.warning)}</p>`:''}${downloads.truncated?'<p class="hint" role="status">Only the first 500 media items are shown.</p>':''}<div class="download-discovery-grid">${visibleMedia.map((media,index)=>renderDownloadCard(media,index)).join('')}</div>`:`<div class="download-empty"><b>${downloads.media.length?'No '+(V.downloadFilter==='video'?'videos':'images')+' found.':'No downloadable media found.'}</b><p>${downloads.media.length?'Try another media type or URL.':'This page may require sign-in or block direct downloads.'}</p></div>`:'';
  const filters=`<div class="download-filters" role="group" aria-label="Media type filter">${[['all','All media'],['image','Images'],['video','Videos']].map(([type,label])=>`<button class="b${V.downloadFilter===type?' p':''}" type="button" data-download-filter="${type}" aria-pressed="${V.downloadFilter===type}">${label}</button>`).join('')}</div>`;
  const history=records.length?`<div class="download-history">${records.map((entry,index)=>`<article class="download-record"><img src="${esc(entry.thumbnailUrl||fallbackThumbnail(entry.type||'media'))}" alt="" loading="lazy"><div class="download-record-copy"><strong>${esc(entry.title||entry.filename||'Media download')}</strong><span>${esc(entry.filename||host(entry.url||''))} · ${esc(new Date(entry.downloadedAt).toLocaleString())}</span></div><button class="b" data-download-history="${index}">Download again</button></article>`).join('')}</div>`:'<p class="hint">Downloads started from this tool or saved media will appear here.</p>';
- $('#main').innerHTML=`<section class="download-tool"><h2>Download from a URL</h2><p class="hint">Paste a public webpage or video URL. Grabit looks for accessible media. Some sites require sign-in or block downloads.</p><form class="download-url-form" id="downloadUrlForm"><input class="in" id="downloadUrlInput" type="url" required maxlength="2048" autocomplete="url" placeholder="https://example.com/video" value="${esc(V.downloadUrl)}" aria-label="URL to find downloadable media"><button class="b p" type="submit"${V.downloadError==='loading'?' disabled':''}>${V.downloadError==='loading'?'Finding media…':'Find media'}</button></form>${filters}${V.downloadError&&V.downloadError!=='loading'?`<p class="download-error" role="alert">${esc(V.downloadError)}</p>`:''}${content}</section><section class="download-history-section"><div class="download-history-heading"><h2>Download history</h2><button class="b" data-clear-downloads${records.length?'':' disabled'}>Clear history</button></div>${history}</section>`;
+ $('#main').innerHTML=`<section class="download-tool"><h2>Download media</h2><p class="hint">Paste a public page or video link. Grabit finds available media and shows it full-size.</p><form class="download-url-form" id="downloadUrlForm"><input class="in" id="downloadUrlInput" type="url" required maxlength="2048" autocomplete="url" placeholder="Paste a webpage or video link" value="${esc(V.downloadUrl)}" aria-label="URL to find downloadable media"><button class="b p" type="submit"${V.downloadError==='loading'?' disabled':''}>${V.downloadError==='loading'?'Finding media…':'Find media'}</button></form>${filters}${V.downloadError&&V.downloadError!=='loading'?`<p class="download-error" role="alert">${esc(V.downloadError)}</p>`:''}${content}</section><section class="download-history-section"><div class="download-history-heading"><h2>Download history</h2><button class="b" data-clear-downloads${records.length?'':' disabled'}>Clear history</button></div>${history}</section>`;
+}
+function renderDownloadCard(media,index){
+ const formats=media.formatOptions||[];
+ const formatSelector=formats.length>1?`<label class="download-quality-label" for="quality-${index}">Video quality<select class="in" id="quality-${index}" data-discovery-quality>${formats.map((format,formatIndex)=>`<option value="${esc(format.formatId)}">${format.height?`${format.height}p`:format.width?`${format.width}px`:format.extension.toUpperCase()}${format.width&&format.height?` · ${format.width} × ${format.height}`:''}${format.filesize?` · ${format.filesize<1024*1024?`${Math.round(format.filesize/1024)} KB`:`${(format.filesize/(1024*1024)).toFixed(1)} MB`}`:''}${formatIndex===0?' · highest quality':''}</option>`).join('')}</select></label>`:'';
+ const quality=media.width||media.height?`${media.width||'?'} × ${media.height||'?'} px`:media.density?`${media.density}×`:media.type==='video'&&index===0?'Highest listed quality':'';
+ const mediaSource=media.playbackUrl||media.url;
+ const video=media.type==='video';
+ const visual=video&&media.embedUrl&&!media.playbackUrl
+  ?`<iframe src="${esc(media.embedUrl)}" title="${esc(media.alt||`Video ${index+1}`)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen loading="lazy"></iframe>`
+  :video
+   ?`<video controls src="${esc(mediaSource)}" poster="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" playsinline preload="metadata"></video>`
+   :`<img src="${esc(mediaSource)}" alt="${esc(media.alt||'')}" loading="lazy" decoding="async">`;
+ const canDownload=video?Boolean(media.providerUrl||media.embedUrl||media.url):!media.embedUrl;
+ return`<article class="download-discovery-card"><div class="download-discovery-thumb">${visual}</div><div class="download-discovery-copy"><strong>${esc(video?'Video':'Image')} ${index+1}${quality?` · ${esc(quality)}`:''}</strong><span>${esc(host(mediaSource))}</span></div>${formatSelector}${!video&&media.embedUrl?'<p class="hint">This provider does not expose a downloadable image file.</p>':''}${video&&(media.providerUrl||media.embedUrl)&&!media.playbackUrl?`<button class="b" data-discovery-play="${index}">Play</button>`:''}${canDownload?`<button class="b p" data-discovery-download="${index}">${video?'Download video':'Download image'}</button>`:''}</article>`;
 }
 async function discoverDownloads(start=1,rawUrl=''){
  const input=$('#downloadUrlInput'),url=validUrl(rawUrl||V.downloadUrl||input?.value||'');
@@ -419,7 +442,10 @@ async function discoverDownloads(start=1,rawUrl=''){
     try{page=await previewUrl(url.href,start>1?{start}:{})}
     catch(error){page={title:host(url.href),media:[],previewWarning:error.message||'The page preview failed.'}}
    }
-  let media=(Array.isArray(page.media)?page.media:[]).filter(entry=>entry&&typeof entry.url==='string').sort((a,b)=>(Number(b.width||0)*Number(b.height||0))-(Number(a.width||0)*Number(a.height||0)));
+  let media=(Array.isArray(page.media)?page.media:[]).filter(entry=>entry&&typeof entry.url==='string').flatMap(entry=>{
+   if(entry.type!=='image'||!Array.isArray(entry.qualityOptions))return[entry];
+   return entry.qualityOptions.map(option=>({...entry,...option,url:option.url,sourceUrl:option.url,qualityOptions:undefined}));
+  }).sort((a,b)=>(Number(b.width||0)*Number(b.height||0))-(Number(a.width||0)*Number(a.height||0))||(Number(b.quality||0)-Number(a.quality||0)));
   if(V.downloadFilter!=='image'&&!page.playlistPaging&&!media.some(entry=>entry.type==='video'&&(entry.playbackUrl||(!entry.providerUrl&&!entry.embedUrl)))){
    try{media=[...media.filter(entry=>entry.type!=='video'),await resolveVideoUrl(url.href)]}
    catch(error){if(media.length)console.warn('yt-dlp could not resolve another video source:',error);else if(page.previewWarning)throw new Error(`${page.previewWarning} ${error.message}`);else throw error}
@@ -652,7 +678,7 @@ function renderWatchPage(pushScroll=false,message=''){
  if(message)content=`<div class="watch-message">${esc(message)}${item.sourceUrl?`<p><a href="${esc(item.sourceUrl)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p>`:''}<button class="b" data-watch-action="retry">Retry</button></div>`;
  else if(active&&!shouldShowGallery)content=`<div class="watch-stage" data-swipe><button class="b watch-arrow previous" data-watch-action="previousMedia" aria-label="Previous photo"${watch.mediaIndex===0?' disabled':''}>‹</button><div class="watch-stage-content">${activeHidden?`<span class="hidden-media-placeholder">${active.type==='video'?'Hidden video':'Hidden image'}</span>`:active.type==='video'&&active.playbackUrl?`<video data-watch-playback controls autoplay playsinline preload="metadata" poster="${esc(active.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(active))}">Video playback is unavailable in this browser.</video>`:active.embedUrl?`<iframe src="${esc(active.embedUrl)}" title="${esc(active.alt||pageTitle)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`:active.type==='video'?`<video controls autoplay playsinline preload="metadata" poster="${esc(active.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(active))}">Video playback is unavailable in this browser.</video>`:`<img class="watch-active-image${watch.mediaDirection==='next'?' slide-from-right':watch.mediaDirection==='previous'?' slide-from-left':''}" src="${esc(mediaSource(active))}" alt="${esc(active.alt||pageTitle)}">`}</div><button class="b watch-arrow next" data-watch-action="nextMedia" aria-label="Next photo"${watch.mediaIndex===media.length-1?' disabled':''}>›</button></div><div class="watch-stage-caption"><span>${watch.mediaIndex+1} / ${media.length}</span>${activeHidden?`<button class="b" data-watch-hide="${esc(active.sourceUrl)}">Unhide ${active.type}</button>`:active.type==='image'?'':`${downloadButton(item,active)}${active.type==='video'&&(active.providerUrl||active.embedUrl)?`<button class="b" data-watch-action="resolveVideo">Try native player</button>`:''}<button class="b" data-watch-hide="${esc(active.sourceUrl)}">Hide ${active.type}</button>`}</div>`;
  else if(page.error&&!media.length)content=`<div class="watch-message">Could not load this URL: ${esc(page.error)}<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p><button class="b p" data-watch-action="resolveSourceVideo">Find and play video</button><button class="b" data-watch-action="retry">Retry</button></div>`;
- else if(media.length)content=`<div class="watch-page-info"><span>${esc(pageTitle)} · ${watch.showingHidden?`${hiddenMedia.length} hidden items`:`${feedMedia.length} items`}</span>${page.url?`<a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original</a>`:''}${!media.some(entry=>entry.type==='video')&&page.url?'<button class="b" data-watch-action="resolveSourceVideo">Find videos</button>':''}${hiddenMedia.length||watch.showingHidden?`<button class="watch-hidden-toggle" data-watch-action="${watch.showingHidden?'showGalleryFeed':'showHiddenMedia'}">${watch.showingHidden?'Back to gallery':`Hidden items (${hiddenMedia.length})`}</button>`:''}</div>${item.type==='playlist'?'':[page.mediaWarning,page.previewWarning,page.truncated?'Only the first 500 media items are shown.':''].filter(Boolean).map(warning=>`<p class="hint" role="status">${esc(warning)}</p>`).join('')}${displayedMedia.length?`<div class="watch-grid">${displayedMedia.map(({entry,index})=>watchMediaTile(item,entry,index)).join('')}</div>`:`<div class="watch-message">${watch.showingHidden?'There are no hidden media on this URL.':'No visible media. Open Hidden items to manage hidden media.'}</div>`}`;
+ else if(media.length)content=`<div class="watch-page-info"><span>${esc(pageTitle)} · ${watch.showingHidden?`${hiddenMedia.length} hidden items`:`${feedMedia.length} items`}</span>${page.url?`<a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original</a>`:''}${!hasGallery&&!media.some(entry=>entry.type==='video')&&page.url?'<button class="b" data-watch-action="resolveSourceVideo">Find videos</button>':''}${hiddenMedia.length||watch.showingHidden?`<button class="watch-hidden-toggle" data-watch-action="${watch.showingHidden?'showGalleryFeed':'showHiddenMedia'}">${watch.showingHidden?'Back to gallery':`Hidden items (${hiddenMedia.length})`}</button>`:''}</div>${item.type==='playlist'?'':[page.mediaWarning,page.previewWarning,page.truncated?'Only the first 500 media items are shown.':''].filter(Boolean).map(warning=>`<p class="hint" role="status">${esc(warning)}</p>`).join('')}${displayedMedia.length?`<div class="watch-grid">${displayedMedia.map(({entry,index})=>watchMediaTile(item,entry,index)).join('')}</div>`:`<div class="watch-message">${watch.showingHidden?'There are no hidden media on this URL.':'No visible media. Open Hidden items to manage them.'}</div>`}`;
  else content=`<div class="watch-message">${esc(message||'No images or videos were found on this page.')}${page.url?`<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p><button class="b p" data-watch-action="resolveSourceVideo">Find and play video</button>`:''}</div>`;
  delete watch.mediaDirection;
  V.watchResizeObserver?.disconnect();V.watchResizeObserver=null;
@@ -837,14 +863,24 @@ async function saveNote(){
  try{await storeItem(emptyItem({type:'note',title:title||'Untitled note',notes,sectionIds:selectedSections($('#bx'))}));await refreshLibrary();hide();render();toast('Note saved.')}catch(e){reportError('Could not save note',e)}
 }
 async function saveImages(){
- const files=[...($('#imageFiles')?.files||[]),...(V.droppedFiles||[])];if(!files.length){toast('Choose or drop at least one image.');return}
- const sections=selectedSections($('#bx'));let count=0;const errors=[],task=startTask('Adding images',files.length,'images');
+ const files=[...($('#imageFiles')?.files||[]),...(V.droppedFiles||[])]; if(!files.length){toast('Choose at least one image or video.');return}
+ const sections=selectedSections($('#bx'));let count=0;const errors=[],task=startTask('Adding media',files.length,'media');
  for(const file of files){
-  try{taskCancelled(task);const image=await imageFile(file);taskCancelled(task);await storeItem(emptyItem({type:'image',title:file.name.replace(/\.[^.]+$/,''),media:[{type:'image',sourceUrl:'',storedDataUrl:image.data,width:image.width,height:image.height}],thumbnailUrl:image.data,sectionIds:sections}));count++}
+  try{
+   taskCancelled(task);
+   if(file.type.startsWith('image/')){
+    const image=await imageFile(file);taskCancelled(task);
+    await storeItem(emptyItem({type:'image',title:file.name.replace(/\.[^.]+$/,''),media:[{type:'image',sourceUrl:'',storedDataUrl:image.data,width:image.width,height:image.height}],thumbnailUrl:image.data,sectionIds:sections}));
+   }else if(file.type.startsWith('video/')){
+    const video=await videoFile(file);taskCancelled(task);
+    await storeItem(emptyItem({type:'video',title:file.name.replace(/\.[^.]+$/,''),media:[{type:'video',sourceUrl:'',storedDataUrl:video.data,mimeType:video.mimeType,size:video.size,position:0}],thumbnailUrl:fallbackThumbnail('video'),sectionIds:sections}));
+   }else throw new Error('Choose an image or video file.');
+   count++;
+  }
   catch(error){if(error.name==='AbortError')break;errors.push(`${file.name}: ${error.message}`)}
-  updateTask(task.controller.signal.aborted?'Cancelling':'Adding images',++task.completed,files.length,task);
+  updateTask(task.controller.signal.aborted?'Cancelling':'Adding media',++task.completed,files.length,task);
  }
- V.droppedFiles=[];await refreshLibrary();finishTask(task);hide();render();toast(`${countLabel(count,'image')} saved${task.controller.signal.aborted?' before cancellation':''}${errors.length?`; ${countLabel(errors.length,'image')} could not be saved`:''}.`);if(errors.length)console.warn('Image import errors:',errors);
+ V.droppedFiles=[];await refreshLibrary();finishTask(task);hide();render();toast(`${countLabel(count,'file')} saved${task.controller.signal.aborted?' before cancellation':''}${errors.length?`; ${countLabel(errors.length,'file')} could not be saved: ${errors[0]}`:''}.`);if(errors.length)console.error('Media upload errors:',errors);
 }
 async function saveDetail(id){
  const item=V.items.find(x=>x.id===id);if(!item)return;
@@ -864,7 +900,7 @@ async function saveDetail(id){
   await storeItem(updated);await refreshLibrary();
   const returnToViewer=V.editReturnToViewer&&V.watch?.itemId===id;
   hide();
-  if(returnToViewer)renderWatchPage();else render();
+  if(returnToViewer){renderWatchPage();document.querySelector('[data-watch-action="edit"]')?.focus()}else{render();focusCardMenuButton(id)}
   toast('Changes saved.');
  }catch(e){reportError('Could not save changes',e)}
 }
@@ -907,11 +943,11 @@ function libraryExportData(){
 }
 function shareDialog(data,title,description){
  V.shareData=data;
- show(`<b>${esc(title)}</b><p class="hint">${esc(description)} This one-time link stays available until the first successful import. Its data is held in server memory and may be lost if the server restarts. After import, the content is saved in the recipient’s browser. Use JSON for a separate backup.</p><div class="row"><button class="b p" data-action="createShareLink">Create one-time share link</button><button class="b" data-action="close">Close</button></div><div id="shareLinkOutput" hidden><label for="shareLinkValue">Share link</label><textarea class="in" id="shareLinkValue" rows="2" readonly></textarea><div class="row"><button class="b" data-action="copyShareLink">Copy link</button></div></div>`);
+ show(`<b>${esc(title)}</b><p class="hint">${esc(description)} The content is encrypted in this browser with AES-256-GCM before upload. The server receives only ciphertext; the decryption key is in the link fragment and is not sent in HTTP requests. The one-time link is consumed after the first successful import. Server restarts may invalidate links. Anyone with the complete link can decrypt it, so share it privately. This does not protect against a server operator who replaces the app code delivered to your browser.</p><div class="row"><button class="b p" data-action="createShareLink">Create encrypted one-time link</button><button class="b" data-action="close">Close</button></div><div id="shareLinkOutput" hidden><label for="shareLinkValue">Encrypted share link</label><textarea class="in" id="shareLinkValue" rows="2" readonly></textarea><div class="row"><button class="b" data-action="copyShareLink">Copy link</button></div></div>`);
 }
 function exportDialog(){
  V.shareData=null;
- show(`<b>Export library</b><p class="hint">Create a one-time link or download JSON. A link works until its first successful import; server restarts can invalidate links. Imported content is saved in the recipient’s browser. Use JSON for a separate backup.</p><div class="row"><button class="b p" data-action="createShareLink">Create one-time share link</button><button class="b" data-action="downloadExport">Download JSON</button><button class="b" data-action="restoreDialog">Import…</button><button class="b" data-action="close">Close</button></div><div id="shareLinkOutput" hidden><label for="shareLinkValue">Share link</label><textarea class="in" id="shareLinkValue" rows="2" readonly></textarea><div class="row"><button class="b" data-action="copyShareLink">Copy link</button></div></div>`);
+ show(`<b>Export library</b><p class="hint">Create an encrypted one-time share link or download a JSON backup. Shares are encrypted in this browser with AES-256-GCM before the server receives them; the server stores ciphertext only. Anyone with the complete link can decrypt its content. Server restarts can invalidate unused links. JSON backups are not encrypted.</p><div class="row"><button class="b p" data-action="createShareLink">Create encrypted one-time link</button><button class="b" data-action="downloadExport">Download JSON</button><button class="b" data-action="restoreDialog">Import…</button><button class="b" data-action="close">Close</button></div><div id="shareLinkOutput" hidden><label for="shareLinkValue">Encrypted share link</label><textarea class="in" id="shareLinkValue" rows="2" readonly></textarea><div class="row"><button class="b" data-action="copyShareLink">Copy link</button></div></div>`);
 }
 function shareItem(id){
  const item=V.items.find(entry=>entry.id===id);if(!item)return;
@@ -1040,7 +1076,7 @@ $('#md').addEventListener('click',async e=>{
  else if(action==='saveItem')await saveDetail(id);
  else if(action==='confirmMoveToSection')await moveItemToSection(id);
  else if(action==='editItem')editItem(id);
- else if(action==='cancelEdit'){const returnToViewer=V.editReturnToViewer&&V.watch?.itemId===id;hide();if(returnToViewer)renderWatchPage();else render()}
+ else if(action==='cancelEdit'){const returnToViewer=V.editReturnToViewer&&V.watch?.itemId===id;hide();if(returnToViewer)renderWatchPage();else{render();focusCardMenuButton(id)}}
  else if(action==='openMedia'){V.mediaIndex=Number(button.dataset.index);const item=V.items.find(x=>x.id===V.dialogItemId);if(item)renderItemViewer(item)}
  else if(action==='backToGallery'){V.mediaIndex=-1;const item=V.items.find(x=>x.id===V.dialogItemId);if(item)renderItemViewer(item)}
  else if(action==='toggleViewerFavorite'){await toggleFavorite(id);const item=V.items.find(x=>x.id===id);if(item)renderItemViewer(item)}
@@ -1083,7 +1119,7 @@ $('#main').addEventListener('click',async e=>{
  if(actionToggle){const tile=actionToggle.closest('.watch-tile-wrap'),menu=tile.querySelector('.watch-actions-menu'),open=!tile.classList.contains('show-actions');document.querySelectorAll('.watch-tile-wrap.show-actions').forEach(item=>{item.classList.remove('show-actions');item.querySelector('.watch-actions-menu')?.classList.remove('align-left');item.querySelector('[data-watch-menu]')?.setAttribute('aria-expanded','false')});tile.classList.toggle('show-actions',open);if(open)menu.classList.toggle('align-left',tile.getBoundingClientRect().left<innerWidth/2);actionToggle.setAttribute('aria-expanded',String(open));return}
  if(!e.target.closest('.watch-tile-wrap.show-actions'))document.querySelectorAll('.watch-tile-wrap.show-actions').forEach(item=>{item.classList.remove('show-actions');item.querySelector('.watch-actions-menu')?.classList.remove('align-left');item.querySelector('[data-watch-menu]')?.setAttribute('aria-expanded','false')});
  const discovered=e.target.closest('[data-discovery-download]');
- if(discovered){const media=V.downloadPreview?.media.filter(entry=>V.downloadFilter==='all'||entry.type===V.downloadFilter)[Number(discovered.dataset.discoveryDownload)];if(media)await downloadMedia(media.providerUrl||media.embedUrl||media.playbackUrl||media.url,{title:media.alt||V.downloadPreview.title,type:media.type,thumbnailUrl:media.thumbnailUrl||'',ytDlp:media.type==='video'&&!!(media.providerUrl||media.embedUrl)});return}
+ if(discovered){const media=V.downloadPreview?.media.filter(entry=>V.downloadFilter==='all'||entry.type===V.downloadFilter)[Number(discovered.dataset.discoveryDownload)],formatId=discovered.closest('.download-discovery-card')?.querySelector('[data-discovery-quality]')?.value||'';if(media)await downloadMedia(media.providerUrl||media.embedUrl||media.playbackUrl||media.url,{title:media.alt||V.downloadPreview.title,type:media.type,thumbnailUrl:media.thumbnailUrl||'',ytDlp:media.type==='video'&&!!(media.providerUrl||media.embedUrl),formatId});return}
  const discoveryPlay=e.target.closest('[data-discovery-play]');
  if(discoveryPlay){
   const media=V.downloadPreview?.media.filter(entry=>V.downloadFilter==='all'||entry.type===V.downloadFilter)[Number(discoveryPlay.dataset.discoveryPlay)];
@@ -1104,7 +1140,7 @@ $('#main').addEventListener('click',async e=>{
  const videoDownload=e.target.closest('[data-download-video]');
  if(videoDownload){await downloadMedia(videoDownload.dataset.downloadVideo,{itemId:videoDownload.dataset.downloadItem,title:videoDownload.dataset.downloadTitle,type:'video',thumbnailUrl:videoDownload.dataset.downloadThumb,ytDlp:true});return}
  const downloadHistory=e.target.closest('[data-download-history]');
- if(downloadHistory){const record=V.downloads[Number(downloadHistory.dataset.downloadHistory)];if(record)await downloadMedia(record.url,{itemId:record.itemId,title:record.title,type:record.type,thumbnailUrl:record.thumbnailUrl,ytDlp:record.ytDlp===true});return}
+ if(downloadHistory){const record=V.downloads[Number(downloadHistory.dataset.downloadHistory)];if(record)await downloadMedia(record.url,{itemId:record.itemId,title:record.title,type:record.type,thumbnailUrl:record.thumbnailUrl,ytDlp:record.ytDlp===true,formatId:record.formatId||''});return}
  if(e.target.closest('[data-clear-downloads]')){V.downloads=[];storeDownloadHistory();render();return}
  const watchButton=e.target.closest('[data-watch-action]');
  if(watchButton&&V.watch&&['previousPlaylistBatch','nextPlaylistBatch'].includes(watchButton.dataset.watchAction)){
@@ -1127,9 +1163,9 @@ $('#main').addEventListener('click',async e=>{
   }
   V.watch.mediaIndex=index;V.watch.scrollTop=$('#main').scrollTop;syncWatchUrl();renderWatchPage();return
  }
- const menuButton=e.target.closest('[data-card-menu]');if(menuButton){e.stopPropagation();const cardEl=menuButton.closest('.card'),menu=cardEl.querySelector('.card-menu'),open=!menu.classList.contains('open');closeCardMenus();if(open){menu.classList.add('open');cardEl.classList.add('menu-open');menuButton.setAttribute('aria-expanded','true');positionCardMenu(menu,menuButton)}return}
+ const menuButton=e.target.closest('[data-card-menu]');if(menuButton){e.stopPropagation();const cardEl=menuButton.closest('.card'),menu=cardEl.querySelector('.card-menu'),open=!menu.classList.contains('open');closeCardMenus();if(open){menu.classList.add('open');cardEl.classList.add('menu-open');menuButton.setAttribute('aria-expanded','true');positionCardMenu(menu,menuButton);menu.querySelector('[role="menuitem"]')?.focus()}return}
  const cardAction=e.target.closest('[data-card-action]');if(cardAction){e.stopPropagation();const id=cardAction.dataset.id,action=cardAction.dataset.cardAction,item=V.items.find(entry=>entry.id===id);if(!item)return;
-  const menu=cardAction.closest('.card-menu');if(menu)closeCardMenus();
+  const menu=cardAction.closest('.card-menu');if(menu){const trigger=menu.previousElementSibling;closeCardMenus();trigger?.focus()}
   if(action==='share'){shareItem(id);return}
   if(action==='moveSection'){moveItemToSectionDialog(id);return}
   if(action==='toggleInbox'){await toggleItemInboxVisibility(id);return}
@@ -1138,13 +1174,15 @@ $('#main').addEventListener('click',async e=>{
   if(action==='archive'){item.isArchived=!item.isArchived;item.updatedAt=new Date().toISOString();try{await storeItem(item);await refreshLibrary();render();toast(item.isArchived?'Archived.':'Restored from archive.')}catch(error){reportError('Could not update archive status',error)}return}
   if(action==='delete'){show(`<b>Delete this item?</b><p>This permanently removes it from this browser library. This cannot be undone.</p><div class="row"><button class="b d" data-action="confirmDeleteItem" data-id="${esc(id)}">Delete permanently</button><button class="b" data-action="cancelDeleteItem" data-id="${esc(id)}">Cancel</button></div>`,true);return}
  }
- if(e.target.closest('#selectMode')){V.selectMode=true;render();return}
+ if(e.target.closest('#selectMode')){V.selectMode=true;V.selected.clear();render();return}
+ if(e.target.closest('[data-clear-filters]')){V.q='';V.type='all';V.filterSectionId='';V.libraryPage=0;$('#q').value='';render();return}
  const bulkButton=e.target.closest('[data-bulk]');if(bulkButton){const action=bulkButton.dataset.bulk;if(action==='done'){V.selectMode=false;V.selected.clear();render()}else if(action==='selectAll'){matchingItems().forEach(i=>V.selected.add(i.id));render()}else if(action==='share')shareSelectedItems();else await bulk(action);return}
  const select=e.target.closest('[data-select]');if(select){e.stopPropagation();select.checked?V.selected.add(select.dataset.select):V.selected.delete(select.dataset.select);return}
  if(e.target.closest('.card-menu'))return;
  const cardEl=e.target.closest('.card');if(cardEl){if(V.selectMode){V.selected.has(cardEl.dataset.id)?V.selected.delete(cardEl.dataset.id):V.selected.add(cardEl.dataset.id);render()}else{V.mediaIndex=0;detail(cardEl.dataset.id)}}
 });
 $('#main').addEventListener('submit',event=>{if(event.target.id==='downloadUrlForm'){event.preventDefault();discoverDownloads(1,$('#downloadUrlInput')?.value||'')}});
+$('#main').addEventListener('paste',event=>{if(!event.target.closest('#downloadUrlInput'))return;setTimeout(()=>{const input=$('#downloadUrlInput');if(input?.value.trim())discoverDownloads(1,input.value)},0)});
 $('#main').addEventListener('scroll',()=>{
  document.querySelectorAll('.card-menu.open').forEach(menu=>{menu.classList.remove('open');menu.style.removeProperty('--menu-left');menu.style.removeProperty('--menu-top');menu.closest('.card')?.classList.remove('menu-open');menu.previousElementSibling?.setAttribute('aria-expanded','false')});
  if(!V.watch)return;
@@ -1164,7 +1202,8 @@ addEventListener('popstate',()=>{
 $('#main').addEventListener('change',async e=>{
  if(e.target.id==='typeFilter'){V.type=e.target.value;V.libraryPage=0;render()}
  if(e.target.id==='sortOrder'){V.sort=e.target.value;V.libraryPage=0;render()}
- if(e.target.matches('[data-select]')){e.target.checked?V.selected.add(e.target.dataset.select):V.selected.delete(e.target.dataset.select);render()}
+ if(e.target.id==='sectionFilter'){V.filterSectionId=e.target.value;V.libraryPage=0;render()}
+ if(e.target.matches('[data-select]')){const id=e.target.dataset.select;e.target.checked?V.selected.add(id):V.selected.delete(id);render();document.querySelector(`[data-select="${CSS.escape(id)}"]`)?.focus()}
 });
 $('#nav').addEventListener('click',e=>{
  if(e.target.closest('#addSection')){createSection();return}
@@ -1172,13 +1211,27 @@ $('#nav').addEventListener('click',e=>{
  if(e.target.closest('#exportLibrary')){exportDialog();return}
  const manage=e.target.closest('[data-manage-section]');if(manage){manageSection(manage.dataset.manageSection);return}
  const item=e.target.closest('[data-view]');if(!item)return;
- V.view=item.dataset.view;V.sectionId=item.dataset.section||null;V.libraryPage=0;V.selectMode=false;V.selected.clear();V.q='';$('#q').value='';$('#win').classList.remove('open');render();
+ V.view=item.dataset.view;V.sectionId=item.dataset.section||null;V.filterSectionId='';V.libraryPage=0;V.selectMode=false;V.selected.clear();V.q='';$('#q').value='';$('#win').classList.remove('open');render();
 });
 $('#nav').addEventListener('dblclick',e=>{const item=e.target.closest('[data-view="section"]');if(item)manageSection(item.dataset.section)});
 $('#nav').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.matches('[data-view]')){e.preventDefault();e.target.click()}});
 addEventListener('keydown',e=>{
- if(e.key==='Escape'&&$('#md').classList.contains('on')){if(V.dialogMode==='edit')toast('Save or cancel your edits before closing.');else hide()}
+ if($('#md').classList.contains('on')&&e.key==='Tab'){
+  const focusable=[...$('#bx').querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],[tabindex]:not([tabindex="-1"])')].filter(element=>element.getClientRects().length);
+  if(!focusable.length){e.preventDefault();$('#bx').focus();return}
+  const first=focusable[0],last=focusable[focusable.length-1];
+  if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}
+  else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}
+  return;
+ }
+ if(e.key==='Escape'&&$('#md').classList.contains('on')){e.preventDefault();if(V.dialogMode==='edit')$('#bx [data-action="cancelEdit"]')?.click();else hide();return}
  if(e.key==='Escape'&&!$('#md').classList.contains('on')){const actions=$('.watch-tile-wrap.show-actions');if(actions){actions.classList.remove('show-actions');actions.querySelector('.watch-actions-menu')?.classList.remove('align-left');const toggle=actions.querySelector('[data-watch-menu]');toggle?.setAttribute('aria-expanded','false');toggle?.focus()}else{const menu=$('.card-menu.open');if(menu){menu.classList.remove('open');menu.previousElementSibling?.setAttribute('aria-expanded','false');menu.previousElementSibling?.focus()}}}
+ const openMenu=e.target.closest('.card-menu[role="menu"]');
+ if(openMenu&&['ArrowDown','ArrowUp','Home','End'].includes(e.key)){
+  const items=[...openMenu.querySelectorAll('[role="menuitem"]')],current=items.indexOf(document.activeElement);
+  const next=e.key==='Home'?0:e.key==='End'?items.length-1:(current+(e.key==='ArrowDown'?1:-1)+items.length)%items.length;
+  e.preventDefault();items[next]?.focus();return;
+ }
  if(e.key==='/'&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)){e.preventDefault();$('#q').focus()}
  if((e.key==='Enter'||e.key===' ')&&e.target.matches('.card'))e.target.click();
  if(V.watch&&V.watch.mediaIndex>=0&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)){if(e.key==='ArrowLeft'){$('[data-watch-action="previousMedia"]:not(:disabled)')?.click()}if(e.key==='ArrowRight'){$('[data-watch-action="nextMedia"]:not(:disabled)')?.click()}}
@@ -1192,7 +1245,7 @@ addEventListener('dragover',e=>e.preventDefault());
 addEventListener('beforeinstallprompt',event=>{event.preventDefault();V.installPrompt=event});
 addEventListener('appinstalled',()=>{V.installPrompt=null;toast('Grabit was installed successfully.')});
 document.addEventListener('error',e=>{const image=e.target;if(!(image instanceof HTMLImageElement)||image.dataset.fallbackApplied)return;image.dataset.fallbackApplied='true';image.src=fallbackThumbnail(image.closest('.card')?.querySelector('.bd')?.textContent||'media')},{capture:true});
-addEventListener('drop',e=>{e.preventDefault();const dropped=[...e.dataTransfer.files],files=dropped.filter(file=>file.type.startsWith('image/'));if(dropped.length!==files.length)toast('Only image files can be added by drag and drop.');if(!files.length)return;V.droppedFiles=files;uploadDialog()});
+addEventListener('drop',e=>{e.preventDefault();const dropped=[...e.dataTransfer.files],files=dropped.filter(file=>file.type.startsWith('image/')||file.type.startsWith('video/'));if(dropped.length!==files.length)toast('Only image and video files can be added by drag and drop.');if(!files.length)return;uploadDialog(files)});
 async function init(){
  try{
   let theme='dark';try{theme=localStorage.getItem('grabit-theme')||theme}catch(error){console.warn('Could not read the saved theme preference:',error)}
