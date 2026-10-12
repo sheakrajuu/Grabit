@@ -30,16 +30,22 @@ export function createItemShareData(data,itemId){
  validateLibraryData(data);
  const item=data.items.find(entry=>entry?.id===itemId);
  if(!item)throw new Error('This library item is no longer available.');
- return{...data,sections:[],items:[{...item,sectionIds:[],inbox:true}]};
+ return{...data,sections:[],items:[shareableItem(item)]};
 }
 
-export function createSectionShareData(data,sectionId){
+export function createItemsShareData(data,itemIds){
  validateLibraryData(data);
- const section=data.sections.find(entry=>entry?.id===sectionId);
- if(!section)throw new Error('This collection is no longer available.');
- const items=data.items.filter(item=>Array.isArray(item?.sectionIds)&&item.sectionIds.includes(sectionId))
-  .map(item=>({...item,sectionIds:[sectionId],inbox:false}));
- return{...data,sections:[section],items};
+ const ids=[...new Set(itemIds)];
+ if(!ids.length)throw new Error('Select at least one library item to share.');
+ const byId=new Map(data.items.map(item=>[item?.id,item]));
+ const items=ids.map(id=>byId.get(id));
+ if(items.some(item=>!item))throw new Error('A selected library item is no longer available.');
+ return{...data,sections:[],items:items.map(shareableItem)};
+}
+
+function shareableItem(item){
+ const {tags,...cleanItem}=item;
+ return{...cleanItem,sectionIds:[],inbox:true,hiddenFromInbox:false};
 }
 
 export async function createLibraryShareLink(data,currentUrl){
@@ -71,6 +77,27 @@ export async function createShortLibraryShareLink(data,currentUrl){
  return url.href;
 }
 
+function shortShareEndpoint(value){
+ const url=new URL(value,globalThis.location?.href||'http://localhost/');
+ const pathMatch=url.pathname.match(/^\/s\/([A-Za-z0-9_-]{16})\/?$/);
+ const params=new URLSearchParams(url.hash.slice(1));
+ const shareId=pathMatch?.[1]||params.get(SHARE_ID_KEY);
+ if(!shareId||!SHARE_ID_PATTERN.test(shareId))throw new Error('This is not a valid Grabit share link.');
+ return new URL(`/api/shares/${shareId}`,url.origin);
+}
+
+export function isShortLibraryShareLink(value){
+ try{
+  const url=new URL(value,globalThis.location?.href||'http://localhost/');
+  return /^\/s\/[A-Za-z0-9_-]{16}\/?$/.test(url.pathname)||new URLSearchParams(url.hash.slice(1)).has(SHARE_ID_KEY);
+ }catch{return false}
+}
+
+export async function consumeShortLibraryShareLink(value){
+ const response=await fetch(shortShareEndpoint(value),{method:'DELETE',cache:'no-store'});
+ if(!response.ok)throw new Error('The share link could not be marked as used.');
+}
+
 export function hasLibraryShareLink(value){
  try{
   const base=globalThis.location?.href||'http://localhost/';
@@ -96,10 +123,10 @@ export async function readLibraryShareLink(value){
  }
  if(shareId){
   if(!SHARE_ID_PATTERN.test(shareId))throw new Error('This is not a valid Grabit share link.');
-  const response=await fetch(new URL(`/api/shares/${shareId}`,url.origin),{cache:'no-store'});
+  const response=await fetch(shortShareEndpoint(value),{cache:'no-store'});
   let result;
   try{result=await response.json()}catch{throw new Error('The share service returned an invalid response.')}
-  if(!response.ok)throw new Error(result.error||'This share link has expired or is unavailable.');
+  if(!response.ok)throw new Error(result.error||'This share link is unavailable.');
   return validateLibraryData(result);
  }
  if(!token)throw new Error('This is not a Grabit share link.');

@@ -1,15 +1,17 @@
-const CACHE_NAME='grabit-shell-v54';
+const CACHE_NAME='grabit-shell-v64';
 const APP_SHELL=[
  './',
  './library.html',
  './manifest.webmanifest',
- './css/styles.css?v=40',
- './js/app.js?v=54',
+ './css/styles.css?v=46',
+ './js/app.js?v=63',
  './js/importer.js',
  './js/share.js',
  './js/storage.js',
  './js/utils.js',
  './icons/git.svg',
+ './icons/sun.svg',
+ './icons/moon.svg',
  './icons/android/icon-192.png',
  './icons/android/icon-512.png',
  './icons/apple/AppIcon-180.png'
@@ -39,7 +41,7 @@ self.addEventListener('fetch',event=>{
   }).catch(()=>caches.match('./library.html')));
   return;
  }
- const appShellAsset=/\/(?:library\.html|manifest\.webmanifest|css\/styles\.css|js\/(?:app|importer|share|storage|utils)\.js|icons\/(?:git\.svg|android\/icon-(?:192|512)\.png|apple\/AppIcon-180\.png))$/.test(url.pathname);
+ const appShellAsset=/\/(?:library\.html|manifest\.webmanifest|css\/styles\.css|js\/(?:app|importer|share|storage|utils)\.js|icons\/(?:git|sun|moon)\.svg|icons\/(?:android\/icon-(?:192|512)\.png|apple\/AppIcon-180\.png))$/.test(url.pathname);
  if(appShellAsset){
   event.respondWith(fetch(request).then(response=>{
    if(response.ok&&response.type==='basic'){const copy=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put(request,copy))}

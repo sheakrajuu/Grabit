@@ -12,6 +12,7 @@ const port=Number(process.env.PORT||3000);
 const MAX_BODY_BYTES=16*1024;
 const RATE_WINDOW_MS=60_000;
 const MAX_PREVIEWS_PER_WINDOW=12;
+const MAX_PLAYLISTS_PER_WINDOW=12;
 const MAX_DOWNLOADS_PER_WINDOW=20;
 const MAX_SHARES_PER_WINDOW=10;
 const buckets=new Map();
@@ -20,7 +21,7 @@ const publicFiles=new Set([
  '/library.html','/manifest.webmanifest','/service-worker.js',
  '/css/styles.css',
  '/js/app.js','/js/importer.js','/js/share.js','/js/storage.js','/js/utils.js',
- '/icons/git.svg','/icons/android/icon-192.png','/icons/android/icon-512.png','/icons/apple/AppIcon-180.png'
+ '/icons/git.svg','/icons/sun.svg','/icons/moon.svg','/icons/android/icon-192.png','/icons/android/icon-512.png','/icons/apple/AppIcon-180.png'
 ]);
 const types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.webmanifest':'application/manifest+json; charset=utf-8','.svg':'image/svg+xml','.png':'image/png'};
 
@@ -39,6 +40,14 @@ function allowPreview(request){
  bucket.count++;
  pruneRateBuckets(now);
  return bucket.count<=MAX_PREVIEWS_PER_WINDOW;
+}
+
+function allowPlaylist(request){
+ const key=`playlist:${getClientAddress(request)}`,now=Date.now();let bucket=buckets.get(key);
+ if(!bucket||now-bucket.start>RATE_WINDOW_MS){bucket={start:now,count:0};buckets.set(key,bucket)}
+ bucket.count++;
+ pruneRateBuckets(now);
+ return bucket.count<=MAX_PLAYLISTS_PER_WINDOW;
 }
 
 function allowDownload(request){
@@ -96,10 +105,18 @@ const server=http.createServer(async(request,response)=>{
  }
  const shareMatch=url.pathname.match(/^\/api\/shares\/([A-Za-z0-9_-]{16})$/);
  if(shareMatch){
-  if(request.method!=='GET'){send(response,405,{error:'Use GET to read a share link.'});return}
-  const data=shareStore.get(shareMatch[1]);
-  if(!data){send(response,404,{error:'This share link has expired or does not exist. Ask the sender to make a new link.'});return}
-  send(response,200,data);
+  if(request.method==='GET'){
+   const data=shareStore.get(shareMatch[1]);
+   if(!data){send(response,404,{error:'This share link has already been used or is no longer available. Ask the sender to make a new link.'});return}
+   send(response,200,data);
+   return;
+  }
+  if(request.method==='DELETE'){
+   shareStore.consume(shareMatch[1]);
+   response.writeHead(204,{'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'}).end();
+   return;
+  }
+  send(response,405,{error:'Use GET to read a share link or DELETE to consume it.'});
   return;
  }
  const shortLinkMatch=url.pathname.match(/^\/s\/([A-Za-z0-9_-]{16})$/);
@@ -118,7 +135,7 @@ const server=http.createServer(async(request,response)=>{
    const start=payload.start??1;
    if(!Number.isSafeInteger(start)||start<1||start>maxPlaylistItems||((start-1)%playlistPageSize)!==0){send(response,400,{error:`Playlist position must start at 1 and advance in groups of ${playlistPageSize}, up to ${maxPlaylistItems-playlistPageSize+1}.`});return}
    const url=new URL(payload.url),knownCollection=isVideoCollectionUrl(payload.url);
-   const shouldDiscoverCollection=knownCollection||payload.start!==undefined||classify(payload.url)==='bookmark';
+   const shouldDiscoverCollection=payload.includePlaylist!==false&&(knownCollection||payload.start!==undefined||classify(payload.url)==='bookmark');
    let page,collection,collectionError,pageError;
    if(shouldDiscoverCollection){
     const [pageResult,collectionResult]=await Promise.allSettled([
@@ -152,6 +169,30 @@ const server=http.createServer(async(request,response)=>{
    }else throw collectionError||pageError||new Error('Could not preview this public URL.');
    send(response,200,result);
   }catch(error){send(response,error.status||422,{error:error.message||'Page extraction failed.'})}
+  return;
+ }
+ if(url.pathname==='/api/playlist'){
+  if(request.method!=='POST'){send(response,405,{error:'Use POST to discover a video list.'});return}
+  if(!allowPlaylist(request)){send(response,429,{error:'Too many video-list requests. Wait a minute and retry.'});return}
+  try{
+   const payload=await readJson(request);
+   if(typeof payload.url!=='string'||payload.url.length>2048){send(response,400,{error:'Provide a video-list URL shorter than 2048 characters.'});return}
+   const start=payload.start??1;
+   if(!Number.isSafeInteger(start)||start<1||start>maxPlaylistItems||((start-1)%playlistPageSize)!==0){send(response,400,{error:`Playlist position must start at 1 and advance in groups of ${playlistPageSize}, up to ${maxPlaylistItems-playlistPageSize+1}.`});return}
+   const url=new URL(payload.url);
+   const collection=await extractVideoCollection(payload.url,{start});
+   const media=collection.media.map((entry,index)=>({...entry,position:start-1+index}));
+   send(response,200,{
+    title:videoCollectionTitle(payload.url)||url.hostname,
+    canonicalUrl:payload.url,
+    media,
+    start:collection.start,
+    hasMore:collection.hasMore,
+    playlistPaging:collection.playlistPaging,
+    truncated:collection.truncated,
+    ...(collection.warning?{mediaWarning:collection.warning}:{})
+   });
+  }catch(error){send(response,error.status||422,{error:error.message||'Video-list discovery failed.'})}
   return;
  }
  if(url.pathname==='/api/video/resolve'){

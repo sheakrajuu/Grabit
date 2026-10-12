@@ -2,15 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createShareStore,MAX_SHARE_BYTES} from '../server/share-store.js';
 
-test('share data can be read until its five-minute expiry and is then removed',async()=>{
- let now=0;
- const store=createShareStore({now:()=>now,idGenerator:()=> 'abcdefghijklmnop',ttlMs:5});
+test('share data does not expire and remains available until consumed once',async()=>{
+ const store=createShareStore({idGenerator:()=> 'abcdefghijklmnop'});
  const created=store.create({items:[]},12);
- assert.equal(created.expiresAt,5);
+ assert.deepEqual(created,{id:'abcdefghijklmnop'});
  assert.deepEqual(store.get(created.id),{items:[]});
  await new Promise(resolve=>setTimeout(resolve,15));
- now=5;
+ assert.deepEqual(store.get(created.id),{items:[]});
+ assert.equal(store.consume(created.id),true);
  assert.equal(store.get(created.id),null);
+ assert.equal(store.consume(created.id),false);
  assert.equal(store.size,0);
 });
 
