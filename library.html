@@ -13,26 +13,27 @@
 <link rel="icon" type="image/svg+xml" href="./icons/git.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="./icons/apple/AppIcon-180.png">
 <meta name="description" content="Save, organize, and view your images, videos, and bookmarks.">
-<link rel="stylesheet" href="./css/styles.css?v=48">
+<link rel="stylesheet" href="./css/styles.css?v=49">
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to main content</a>
 <div class="win" id="win">
- <aside class="side"><div class="brand">Grabit</div><div id="nav"></div></aside>
+ <aside class="side" id="sidebar" aria-label="Library sidebar"><div class="brand">Grabit</div><nav id="nav" aria-label="Library navigation"></nav></aside>
  <div class="scrim" id="scrim"></div>
  <div class="mw">
-  <div class="top">
-   <button class="ib" id="sbt" title="Toggle sidebar" aria-label="Toggle sidebar">☰</button>
+  <header class="top">
+   <button class="ib" id="sbt" title="Toggle sidebar" aria-label="Toggle sidebar" aria-controls="sidebar" aria-expanded="false">☰</button>
    <h1 id="ttl">Inbox</h1>
    <button class="ib" id="themeToggle" title="Switch theme" aria-label="Switch theme"><img src="./icons/sun.svg" alt=""></button>
    <button class="ib" id="add" title="Add content">+ Add</button>
    <input class="in" id="q" placeholder="Search your library…" autocomplete="off" aria-label="Search your library">
-  </div>
-  <div id="main" aria-live="polite"></div>
+  </header>
+  <main id="main"></main>
  </div>
 </div>
 <div class="md" id="md" role="presentation"><div class="box" id="bx" role="dialog" aria-modal="true" aria-label="Library dialog" tabindex="-1"></div></div>
 <div id="ts" role="status" aria-live="polite"></div>
 <div id="task-status" role="status" aria-live="polite" hidden></div>
-<script type="module" src="./js/app.js?v=67"></script>
+<script type="module" src="./js/app.js?v=68"></script>
 </body>
 </html>
