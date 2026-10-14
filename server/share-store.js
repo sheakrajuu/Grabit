@@ -3,7 +3,7 @@ import {randomBytes} from 'node:crypto';
 export const MAX_SHARE_BYTES=80*1024*1024;
 const MAX_ACTIVE_SHARE_BYTES=256*1024*1024;
 
-export function createShareStore({idGenerator=()=>randomBytes(12).toString('base64url'),maxActiveBytes=MAX_ACTIVE_SHARE_BYTES}={}){
+export function createShareStore({idGenerator=()=>randomBytes(9).toString('base64url'),maxActiveBytes=MAX_ACTIVE_SHARE_BYTES}={}){
  const shares=new Map();
  let activeBytes=0;
 

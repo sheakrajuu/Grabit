@@ -150,6 +150,36 @@ export function parsePage(html,pageUrl,limit=MAX_MEDIA){
  return{title:pageTitle,description:descriptionMeta.map(x=>cleanText(x,1500)).find(Boolean)||'',canonicalUrl,media,mediaCount:media.length,truncated:imageTotal+videoCount.value>limit};
 }
 
+function pixivArtworkId(url){
+ const hostname=url.hostname.toLowerCase();
+ const match=url.pathname.match(/^\/(?:en\/)?artworks\/(\d+)\/?$/i);
+ return ['pixiv.net','www.pixiv.net'].includes(hostname)?match?.[1]||'':'';
+}
+
+function pixivCdnUrl(value,base){
+ const url=publicMediaUrl(value,base);
+ if(!url)return null;
+ return ['i.pximg.net','i-f.pximg.net'].includes(new URL(url).hostname.toLowerCase())?url:null;
+}
+
+export function parsePixivPages(payload,pageUrl,limit=MAX_MEDIA){
+ if(!payload||payload.error!==false||!Array.isArray(payload.body))throw new Error('Pixiv did not return artwork image metadata.');
+ const media=payload.body.flatMap(page=>{
+  const original=pixivCdnUrl(page?.urls?.original,pageUrl);
+  const preview=pixivCdnUrl(page?.urls?.regular||page?.urls?.small,pageUrl);
+  if(!original)return [];
+  return [{
+   type:'image',
+   url:original,
+   thumbnailUrl:preview||original,
+   alt:'',
+   ...(Number(page.width)>0?{width:Number(page.width)}:{}),
+   ...(Number(page.height)>0?{height:Number(page.height)}:{})
+  }];
+ });
+ return{media:media.slice(0,limit),mediaCount:Math.min(media.length,limit),truncated:media.length>limit};
+}
+
 export function decompress(response){
  return new Promise((resolve,reject)=>{
   const chunks=[];let length=0;
@@ -161,10 +191,10 @@ export function decompress(response){
  });
 }
 
-function requestPage(url,address){
+function requestPage(url,address,headers={}){
  const transport=url.protocol==='https:'?https:http;
  return new Promise((resolve,reject)=>{
-  const request=transport.request(url,{method:'GET',headers:{'user-agent':USER_AGENT,accept:'text/html,application/xhtml+xml;q=0.9','accept-encoding':'gzip, deflate, br'},lookup:createPinnedLookup(address),servername:net.isIP(url.hostname)?undefined:url.hostname,rejectUnauthorized:true},response=>{
+  const request=transport.request(url,{method:'GET',headers:{'user-agent':USER_AGENT,accept:'text/html,application/xhtml+xml;q=0.9','accept-encoding':'gzip, deflate, br',...headers},lookup:createPinnedLookup(address),servername:net.isIP(url.hostname)?undefined:url.hostname,rejectUnauthorized:true},response=>{
    const contentType=String(response.headers['content-type']||'').toLowerCase();
    if([301,302,303,307,308].includes(response.statusCode)||/^(image|video|audio)\//.test(contentType)){
     response.resume();resolve({status:response.statusCode||0,headers:response.headers,body:Buffer.alloc(0)});return;
@@ -179,7 +209,7 @@ function requestPage(url,address){
 function requestMediaStream(url,address){
  const transport=url.protocol==='https:'?https:http;
  return new Promise((resolve,reject)=>{
-  const request=transport.get(url,{headers:{'user-agent':USER_AGENT,accept:'image/*,video/*,audio/*,application/octet-stream;q=0.9,*/*;q=0.1','accept-encoding':'identity'},lookup:createPinnedLookup(address),servername:net.isIP(url.hostname)?undefined:url.hostname,rejectUnauthorized:true},response=>{
+  const request=transport.get(url,{headers:mediaRequestHeaders(url),lookup:createPinnedLookup(address),servername:net.isIP(url.hostname)?undefined:url.hostname,rejectUnauthorized:true},response=>{
    const status=response.statusCode||0;
    if([301,302,303,307,308].includes(status)){response.resume();resolve({status,location:response.headers.location});return}
    const contentType=String(response.headers['content-type']||'application/octet-stream').split(';')[0].trim().toLowerCase();
@@ -190,6 +220,13 @@ function requestMediaStream(url,address){
   request.setTimeout(REQUEST_TIMEOUT_MS,()=>request.destroy(new Error('The media download timed out.')));
   request.on('error',reject);
  });
+}
+
+export function mediaRequestHeaders(url){
+ const headers={'user-agent':USER_AGENT,accept:'image/*,video/*,audio/*,application/octet-stream;q=0.9,*/*;q=0.1','accept-encoding':'identity'};
+ const hostname=url.hostname.toLowerCase();
+ if(hostname==='pximg.net'||hostname.endsWith('.pximg.net'))headers.referer='https://www.pixiv.net/';
+ return headers;
 }
 
 export function safeDownloadFilename(value){
@@ -258,7 +295,21 @@ export async function extractPage(rawUrl){
    throw new Error('This URL does not return an HTML webpage or a recognized media file.');
   }
   const html=response.body.toString('utf8');
-  return{...parsePage(html,current.href),sourceUrl:rawUrl,finalUrl:current.href,sourceDomain:current.hostname.replace(/^www\./,'')};
+  const page={...parsePage(html,current.href),sourceUrl:rawUrl,finalUrl:current.href,sourceDomain:current.hostname.replace(/^www\./,'')};
+  const artworkId=pixivArtworkId(current);
+  if(!artworkId)return page;
+  const apiUrl=new URL(`/ajax/illust/${artworkId}/pages?lang=en`,'https://www.pixiv.net');
+  const apiAddress=await resolvePublicAddress(apiUrl.hostname);
+  if(!apiAddress)throw new Error('Pixiv artwork metadata resolves to a private or unavailable network address.');
+  const apiResponse=await requestPage(apiUrl,apiAddress,{
+   accept:'application/json',
+   referer:`https://www.pixiv.net/artworks/${artworkId}`
+  });
+  if(apiResponse.status<200||apiResponse.status>=300)throw new Error(`Pixiv artwork metadata returned HTTP ${apiResponse.status}.`);
+  let payload;
+  try{payload=JSON.parse(apiResponse.body.toString('utf8'))}catch{throw new Error('Pixiv returned invalid artwork image metadata.')}
+  const artwork=parsePixivPages(payload,current.href);
+  return{...page,...artwork};
  }
  throw new Error('Could not follow the webpage redirect.');
 }

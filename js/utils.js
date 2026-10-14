@@ -3,6 +3,8 @@ export const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<
 export const uid=()=>globalThis.crypto?.randomUUID?.()||`${Date.now().toString(36)}${Math.random().toString(36).slice(2,9)}`;
 export const host=url=>{try{return new URL(url).hostname.replace(/^www\./,'')}catch{return ''}};
 export const validUrl=value=>{try{const url=new URL(value);return ['http:','https:'].includes(url.protocol)&&!!url.hostname&&!url.username&&!url.password?url:null}catch{return null}};
+export const isPixivImageUrl=value=>{const url=validUrl(value);return !!url&&url.protocol==='https:'&&!url.port&&(url.hostname.toLowerCase()==='pximg.net'||url.hostname.toLowerCase().endsWith('.pximg.net'))};
+export const pixivImageProxyUrl=value=>isPixivImageUrl(value)?`/api/pixiv-image?url=${encodeURIComponent(new URL(value).href)}`:value;
 export const normalized=value=>{const url=validUrl(value);if(!url)return '';url.hash='';if(url.pathname!='/')url.pathname=url.pathname.replace(/\/+$/,'');return url.href};
 export const videoCollectionTitle=value=>{const url=validUrl(value);if(!url||!['xhofficial.com','xhamster.com'].includes(url.hostname.toLowerCase().replace(/^www\./,'')))return '';const match=url.pathname.match(/^\/users\/([^/]+)\/videos\/?$/i);if(!match)return '';let name=match[1];try{name=decodeURIComponent(name)}catch{}return`${name} videos`};
 export const EXT_IMAGE=/\.(?:avif|bmp|gif|jpe?g|png|svg|webp)(?:$)/i;

@@ -4,10 +4,10 @@ import http from 'node:http';
 import net from 'node:net';
 import {Readable} from 'node:stream';
 import {brotliCompressSync,deflateSync,gzipSync} from 'node:zlib';
-import {parsePage,bestSrcsetCandidate,srcsetCandidates,resolvePublicAddress,createPinnedLookup,decompress,safeDownloadFilename,downloadPublicMedia,openPublicMedia,extractorLimits} from '../server/extractor.js';
+import {parsePage,parsePixivPages,bestSrcsetCandidate,srcsetCandidates,resolvePublicAddress,createPinnedLookup,decompress,safeDownloadFilename,downloadPublicMedia,openPublicMedia,mediaRequestHeaders,extractorLimits} from '../server/extractor.js';
 import {isVideoCollectionUrl,parseResolvedVideo,parseYtDlpOutput,parseYtDlpPlaylist,ytDlpTargetUrl} from '../server/playlist.js';
 import {createPublicProxy} from '../server/public-proxy.js';
-import {videoEmbedUrl,socialMediaEmbed,videoCollectionTitle} from '../js/utils.js';
+import {videoEmbedUrl,socialMediaEmbed,videoCollectionTitle,isPixivImageUrl,pixivImageProxyUrl} from '../js/utils.js';
 
 test('recognizes XHamster and XHOfficial creator-list URL normalization targets',()=>{
  assert.equal(isVideoCollectionUrl('https://xhofficial.com/users/angelofbogota/videos'),true);
@@ -138,6 +138,39 @@ test('extracts more than thirty page images',()=>{
  assert.equal(page.media.length,40);
  assert.equal(page.mediaCount,40);
  assert.equal(page.truncated,false);
+});
+
+test('extracts only Pixiv artwork images and ignores unrelated page assets',()=>{
+ const result=parsePixivPages({
+  error:false,
+  body:[
+   {urls:{original:'https://i.pximg.net/img-original/1.png',regular:'https://i.pximg.net/img-master/1.jpg'},width:1920,height:1080},
+   {urls:{original:'https://i.pximg.net/img-original/2.png',small:'https://i.pximg.net/c/540x540_70/img-master/2.jpg'},width:800,height:1200},
+   {urls:{original:'https://s.pximg.net/logo.svg'}},
+   {urls:{original:'file:///private/image.png'}},
+   {urls:{regular:'https://i.pximg.net/no-original.jpg'}}
+  ]
+ },'https://www.pixiv.net/artworks/123');
+ assert.deepEqual(result,{
+  media:[
+   {type:'image',url:'https://i.pximg.net/img-original/1.png',thumbnailUrl:'https://i.pximg.net/img-master/1.jpg',alt:'',width:1920,height:1080},
+   {type:'image',url:'https://i.pximg.net/img-original/2.png',thumbnailUrl:'https://i.pximg.net/c/540x540_70/img-master/2.jpg',alt:'',width:800,height:1200}
+  ],
+  mediaCount:2,
+  truncated:false
+ });
+ assert.throws(()=>parsePixivPages({error:true,body:[]},'https://www.pixiv.net/artworks/123'),/artwork image metadata/);
+});
+
+test('extracts every Pixiv image from a multi-page artwork',()=>{
+ const result=parsePixivPages({
+  error:false,
+  body:Array.from({length:11},(_,index)=>({urls:{original:`https://i.pximg.net/img-original/artwork_p${index}.png`}}))
+ },'https://www.pixiv.net/artworks/123');
+ assert.equal(result.media.length,11);
+ assert.equal(result.mediaCount,11);
+ assert.equal(result.truncated,false);
+ assert.equal(result.media[10].url,'https://i.pximg.net/img-original/artwork_p10.png');
 });
 
 test('prefers the highest-resolution responsive image candidate',()=>{
@@ -295,6 +328,24 @@ test('decompresses gzip, deflate, and Brotli webpage responses',async()=>{
 test('sanitizes attachment filenames before returning download headers',()=>{
  assert.equal(safeDownloadFilename('../folder/bad:name?.jpg'),'_folder_bad_name_.jpg');
  assert.equal(safeDownloadFilename(''),'download');
+});
+
+test('sends Pixiv CDN the required Pixiv referrer without forwarding it elsewhere',()=>{
+ assert.equal(mediaRequestHeaders(new URL('https://i.pximg.net/img-original/illust/1/1.jpg')).referer,'https://www.pixiv.net/');
+ assert.equal(mediaRequestHeaders(new URL('https://subdomain.pximg.net/image.jpg')).referer,'https://www.pixiv.net/');
+ assert.equal(mediaRequestHeaders(new URL('https://notpximg.net/image.jpg')).referer,undefined);
+ assert.equal(mediaRequestHeaders(new URL('https://images.example/image.jpg')).referer,undefined);
+});
+
+test('routes Pixiv CDN images through the local referrer-aware image proxy',()=>{
+ const image='https://i.pximg.net/img-original/illust/1/1.jpg?token=example';
+ assert.equal(isPixivImageUrl(image),true);
+ assert.equal(pixivImageProxyUrl(image),`/api/pixiv-image?url=${encodeURIComponent(image)}`);
+ assert.equal(isPixivImageUrl('https://pximg.net/image.jpg'),true);
+ assert.equal(isPixivImageUrl('http://i.pximg.net/image.jpg'),false);
+ assert.equal(isPixivImageUrl('https://i.pximg.net:8443/image.jpg'),false);
+ assert.equal(isPixivImageUrl('https://notpximg.net/image.jpg'),false);
+ assert.equal(pixivImageProxyUrl('https://images.example/image.jpg'),'https://images.example/image.jpg');
 });
 
 test('rejects non-HTTP and private-network download targets',async()=>{

@@ -67,19 +67,20 @@ test('creates and reads a short server-backed share link',async()=>{
    encryptedBytes=Buffer.from(options.body);
    assert.notDeepEqual(encryptedBytes,Buffer.from(JSON.stringify(library)));
    assert.equal(encryptedBytes.includes(Buffer.from('Stored image')),false);
-   return new Response(JSON.stringify({id:'abcdefghijklmnop'}),{status:201,headers:{'content-type':'application/json'}});
+   assert.equal(encryptedBytes.length>28,true);
+   return new Response(JSON.stringify({id:'abcdefghijkl'}),{status:201,headers:{'content-type':'application/json'}});
   }
-  assert.equal(url.pathname,'/api/shares/abcdefghijklmnop');
+  assert.equal(url.pathname,'/api/shares/abcdefghijkl');
   return new Response(encryptedBytes,{headers:{'content-type':'application/octet-stream'}});
  };
  try{
   const link=await createShortLibraryShareLink(library,'https://grabit.example/library.html?watch=item-1#old-route');
   const params=new URLSearchParams(new URL(link).hash.slice(1));
   assert.equal(new URL(link).pathname,'/');
-  assert.equal(params.get('s'),'abcdefghijklmnop');
+  assert.equal(params.get('s'),'abcdefghijkl');
   assert.ok(params.get('k'));
-  assert.ok(params.get('v'));
-  assert.ok(link.length<120);
+  assert.equal(params.has('v'),false);
+  assert.ok(link.length<100);
   assert.equal(hasLibraryShareLink(link),true);
   assert.deepEqual(await readLibraryShareLink(link),library);
  }finally{globalThis.fetch=originalFetch}
@@ -93,7 +94,7 @@ test('encrypted shares preserve uploaded video data for the recipient',async()=>
   if(options?.method==='POST'){
    ciphertext=Buffer.from(options.body);
    assert.equal(ciphertext.includes(Buffer.from('data:video/mp4')),false);
-   return new Response(JSON.stringify({id:'abcdefghijklmnop'}),{status:201,headers:{'content-type':'application/json'}});
+   return new Response(JSON.stringify({id:'abcdefghijkl'}),{status:201,headers:{'content-type':'application/json'}});
   }
   return new Response(ciphertext,{headers:{'content-type':'application/octet-stream'}});
  };

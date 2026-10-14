@@ -8,7 +8,7 @@ const ENCRYPTION_KEY='grabit-share-key';
 const ENCRYPTION_IV='grabit-share-iv';
 const SHORT_ENCRYPTION_KEY='k';
 const SHORT_ENCRYPTION_IV='v';
-const SHARE_ID_PATTERN=/^[A-Za-z0-9_-]{16}$/;
+const SHARE_ID_PATTERN=/^(?:[A-Za-z0-9_-]{12}|[A-Za-z0-9_-]{16})$/;
 
 function encodeBase64Url(bytes){
  let binary='';
@@ -97,20 +97,23 @@ export async function createLibraryShareLink(data,currentUrl){
 export async function createShortLibraryShareLink(data,currentUrl){
  validateLibraryData(data);
  const encrypted=await encryptLibraryData(data);
- const response=await fetch(new URL('/api/shares',currentUrl),{method:'POST',headers:{'content-type':'application/octet-stream'},body:encrypted.ciphertext,cache:'no-store'});
+ const iv=decodeBase64Url(encrypted.iv),sharePayload=new Uint8Array(iv.length+encrypted.ciphertext.length);
+ sharePayload.set(iv);
+ sharePayload.set(encrypted.ciphertext,iv.length);
+ const response=await fetch(new URL('/api/shares',currentUrl),{method:'POST',headers:{'content-type':'application/octet-stream'},body:sharePayload,cache:'no-store'});
  let result;
  try{result=await response.json()}catch{throw new Error('The share service returned an invalid response.')}
  if(!response.ok)throw new Error(result.error||'Could not create a short share link.');
  if(typeof result.id!=='string'||!SHARE_ID_PATTERN.test(result.id))throw new Error('The share service returned an invalid share link.');
  const url=new URL('/',currentUrl);
  url.search='';
- url.hash=new URLSearchParams([[SHORT_SHARE_ID_KEY,result.id],[SHORT_ENCRYPTION_KEY,encrypted.key],[SHORT_ENCRYPTION_IV,encrypted.iv]]).toString();
+ url.hash=new URLSearchParams([[SHORT_SHARE_ID_KEY,result.id],[SHORT_ENCRYPTION_KEY,encrypted.key]]).toString();
  return url.href;
 }
 
 function shortShareEndpoint(value){
  const url=new URL(value,globalThis.location?.href||'http://localhost/');
- const pathMatch=url.pathname.match(/^\/s\/([A-Za-z0-9_-]{16})\/?$/);
+ const pathMatch=url.pathname.match(/^\/s\/([A-Za-z0-9_-]{12}|[A-Za-z0-9_-]{16})\/?$/);
  const params=new URLSearchParams(url.hash.slice(1));
  const shareId=pathMatch?.[1]||params.get(SHORT_SHARE_ID_KEY)||params.get(SHARE_ID_KEY);
  if(!shareId||!SHARE_ID_PATTERN.test(shareId))throw new Error('This is not a valid Grabit share link.');
@@ -121,7 +124,7 @@ export function isShortLibraryShareLink(value){
  try{
   const url=new URL(value,globalThis.location?.href||'http://localhost/');
   const params=new URLSearchParams(url.hash.slice(1));
-  return /^\/s\/[A-Za-z0-9_-]{16}\/?$/.test(url.pathname)||params.has(SHORT_SHARE_ID_KEY)||params.has(SHARE_ID_KEY);
+  return /^\/s\/(?:[A-Za-z0-9_-]{12}|[A-Za-z0-9_-]{16})\/?$/.test(url.pathname)||params.has(SHORT_SHARE_ID_KEY)||params.has(SHARE_ID_KEY);
  }catch{return false}
 }
 
@@ -135,7 +138,7 @@ export function hasLibraryShareLink(value){
   const base=globalThis.location?.href||'http://localhost/';
   const url=new URL(value,base);
   const params=new URLSearchParams(url.hash.slice(1));
-  return params.has(SHARE_KEY)||params.has(ENCRYPTED_DATA_KEY)||params.has(SHORT_SHARE_ID_KEY)||params.has(SHARE_ID_KEY)||/^\/s\/[A-Za-z0-9_-]{16}\/?$/.test(url.pathname);
+  return params.has(SHARE_KEY)||params.has(ENCRYPTED_DATA_KEY)||params.has(SHORT_SHARE_ID_KEY)||params.has(SHARE_ID_KEY)||/^\/s\/(?:[A-Za-z0-9_-]{12}|[A-Za-z0-9_-]{16})\/?$/.test(url.pathname);
  }catch{return false}
 }
 
@@ -150,18 +153,20 @@ export async function readLibraryShareLink(value){
  const params=new URLSearchParams(hash),token=params.get(SHARE_KEY),encryptedToken=params.get(ENCRYPTED_DATA_KEY);
  let shareId=params.get(SHORT_SHARE_ID_KEY)||params.get(SHARE_ID_KEY);
  if(!shareId){
-  const shortPath=url.pathname.match(/^\/s\/([A-Za-z0-9_-]{16})\/?$/);
+  const shortPath=url.pathname.match(/^\/s\/([A-Za-z0-9_-]{12}|[A-Za-z0-9_-]{16})\/?$/);
   if(shortPath)shareId=shortPath[1];
  }
  if(shareId){
   if(!SHARE_ID_PATTERN.test(shareId))throw new Error('This is not a valid Grabit share link.');
   const key=params.get(SHORT_ENCRYPTION_KEY)||params.get(ENCRYPTION_KEY),iv=params.get(SHORT_ENCRYPTION_IV)||params.get(ENCRYPTION_IV);
-  if(!key||!iv)throw new Error('This share link is incomplete or predates encrypted sharing. Ask the sender to create and share a new link.');
+  if(!key)throw new Error('This share link is incomplete or predates encrypted sharing. Ask the sender to create and share a new link.');
   const response=await fetch(shortShareEndpoint(value),{cache:'no-store'});
   if(!response.ok){let result={};try{result=await response.json()}catch{}throw new Error(result.error||'This share link is unavailable.')}
-  const ciphertext=await response.arrayBuffer();
-  if(ciphertext.byteLength>MAX_LIBRARY_BYTES+16)throw new Error('This share exceeds the 79 MB limit.');
-  return decryptLibraryData(ciphertext,key,iv);
+  const payload=new Uint8Array(await response.arrayBuffer());
+  if(payload.byteLength>MAX_LIBRARY_BYTES+28)throw new Error('This share exceeds the 79 MB limit.');
+  if(iv)return decryptLibraryData(payload,key,iv);
+  if(payload.byteLength<28)throw new Error('This share link contains incomplete encrypted data.');
+  return decryptLibraryData(payload.slice(12),key,encodeBase64Url(payload.slice(0,12)));
  }
  if(encryptedToken){
   const key=params.get(ENCRYPTION_KEY),iv=params.get(ENCRYPTION_IV);

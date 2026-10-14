@@ -82,6 +82,10 @@ test('serves the local video converter and its WebAssembly assets',async t=>{
 
 test('share routes accept and return opaque ciphertext only, then consume it',async t=>{
  const baseUrl=await startServer(t);
+ const invalidPixivImage=await fetch(`${baseUrl}/api/pixiv-image?url=${encodeURIComponent('https://images.example/image.jpg')}`);
+ assert.equal(invalidPixivImage.status,400);
+ assert.match((await invalidPixivImage.json()).error,/Pixiv image CDN URL/);
+
  const plaintext='private-library-content-must-not-be-stored';
  const plaintextResponse=await fetch(`${baseUrl}/api/shares`,{
   method:'POST',
@@ -103,7 +107,7 @@ test('share routes accept and return opaque ciphertext only, then consume it',as
  });
  assert.equal(created.status,201);
  const {id}=await created.json();
- assert.match(id,/^[A-Za-z0-9_-]{16}$/);
+ assert.match(id,/^[A-Za-z0-9_-]{12}$/);
 
  const retrieved=await fetch(`${baseUrl}/api/shares/${id}`);
  assert.equal(retrieved.headers.get('content-type'),'application/octet-stream');

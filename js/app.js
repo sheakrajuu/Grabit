@@ -1,4 +1,4 @@
-import {$,esc,uid,host,validUrl,normalized,classify,fallbackThumbnail,socialMediaEmbed,videoCollectionTitle} from './utils.js';
+import {$,esc,uid,host,validUrl,normalized,classify,fallbackThumbnail,socialMediaEmbed,videoCollectionTitle,pixivImageProxyUrl} from './utils.js';
 import {openDB,migrateLegacy,loadLibrary,storeItem as persistItem,storeSection as persistSection,removeItem as deleteStoredItem,removeSection as deleteStoredSection} from './storage.js';
 import {previewUrl,discoverPlaylistUrl,resolveVideoUrl,videoDownloadUrl} from './importer.js';
 import {isVideoFile,videoFile} from './video-transcoder.js';
@@ -158,7 +158,7 @@ function matchingItems(){
  items.sort((a,b)=>V.view==='recent'||V.sort==='recent'?savedAt(b)-savedAt(a):V.sort==='oldest'?savedAt(a)-savedAt(b):V.sort==='alphabetical'?a.title.localeCompare(b.title):updatedAt(b)-updatedAt(a));
  return items;
 }
-function thumbUrl(item){if(item.type==='note')return '';return item.thumbnailUrl||item.media?.find(m=>m.type==='image')?.sourceUrl||item.media?.find(m=>m.thumbnailUrl)?.thumbnailUrl||fallbackThumbnail(item.type)}
+function thumbUrl(item){if(item.type==='note')return '';return pixivImageProxyUrl(item.thumbnailUrl||item.media?.find(m=>m.type==='image')?.sourceUrl||item.media?.find(m=>m.thumbnailUrl)?.thumbnailUrl||fallbackThumbnail(item.type))}
 function card(item){
  const thumb=thumbUrl(item);const hasMorePlaylistVideos=item.type==='playlist'&&item.sourcePages?.some(page=>page.playlistPaging&&page.playlistHasMore);const labels={bookmark:'WEB',note:'NOTE',image:'IMAGE',video:'VIDEO',gallery:`GALLERY · ${item.media.length}`,playlist:`PLAYLIST · ${item.media.length}${hasMorePlaylistVideos?'+':''}`};
  const image=item.type==='note'?'':`<img class="art" src="${esc(thumb)}" alt="" loading="lazy" decoding="async">`;
@@ -232,7 +232,7 @@ function previewPanel(){
  const sections=state.pages.map((page,pageIndex)=>{
   const available=page.media.map((media,mediaIndex)=>({media,mediaIndex})).filter(({media})=>state.showHidden||!page.hiddenUrls.has(media.url));
   const tiles=available.map(({media,mediaIndex})=>`<div class="media-tile ${media.type==='video'?'video-tile':''}">
-   ${media.type==='video'&&media.embedUrl?`<img src="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" alt="" loading="lazy" decoding="async"><span class="play-mark" aria-hidden="true">▶</span>`:media.type==='video'?`<video src="${esc(media.playbackUrl||media.url)}" poster="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" muted playsinline preload="none" tabindex="-1"></video>`:`<img src="${esc(media.thumbnailUrl||media.url)}" alt="${esc(media.alt||`Image ${mediaIndex+1}`)}" loading="lazy" decoding="async">`}
+   ${media.type==='video'&&media.embedUrl?`<img src="${esc(pixivImageProxyUrl(media.thumbnailUrl||fallbackThumbnail('video')))}" alt="" loading="lazy" decoding="async"><span class="play-mark" aria-hidden="true">▶</span>`:media.type==='video'?`<video src="${esc(media.playbackUrl||media.url)}" poster="${esc(pixivImageProxyUrl(media.thumbnailUrl||fallbackThumbnail('video')))}" muted playsinline preload="none" tabindex="-1"></video>`:`<img src="${esc(pixivImageProxyUrl(media.thumbnailUrl||media.url))}" alt="${esc(media.alt||`Image ${mediaIndex+1}`)}" loading="lazy" decoding="async">`}
    <label class="media-select"><input type="checkbox" data-preview-page="${pageIndex}" data-preview-select="${esc(media.url)}"${page.selected.has(media.url)?' checked':''}> Select</label>
    <button class="media-menu-button" data-preview-page="${pageIndex}" data-preview-hide="${esc(media.url)}" aria-label="${page.hiddenUrls.has(media.url)?'Unhide':'Hide'} this media">${page.hiddenUrls.has(media.url)?'Unhide':'Hide'}</button>
   </div>`).join('');
@@ -341,7 +341,7 @@ function noteDialog(){
 }
 function uploadDialog(droppedFiles=[]){
  V.droppedFiles=droppedFiles;
- show(`<b>Add media</b><p class="hint">Images are compressed; videos up to 100 MB each are saved on this device. Unsupported video codecs can be converted locally; the original stays private. Conversion uses extra device resources and may not work for every file.</p>${V.droppedFiles?.length?`<p>${V.droppedFiles.length} ${V.droppedFiles.length===1?'file is':'files are'} ready to add.</p>`:''}<label for="imageFiles">Choose images or videos</label><input class="in" id="imageFiles" type="file" accept="image/*,video/*,.mkv,.avi,.wmv,.flv,.mpeg,.mpg,.mts,.m2ts,.ts,.vob,.asf,.3gp,.3g2" multiple><label>Save to</label>${destinationOptions()}<div class="row"><button class="b p" data-action="saveImages">Add media</button><button class="b" data-action="close">Cancel</button></div>`);
+ show(`<b>Add media</b><p class="hint">Images are compressed; multiple selected photos are saved together as one gallery. Videos up to 100 MB each are saved on this device. Unsupported video codecs can be converted locally; the original stays private. Conversion uses extra device resources and may not work for every file.</p>${V.droppedFiles?.length?`<p>${V.droppedFiles.length} ${V.droppedFiles.length===1?'file is':'files are'} ready to add.</p>`:''}<label for="imageFiles">Choose images or videos</label><input class="in" id="imageFiles" type="file" accept="image/*,video/*,.mkv,.avi,.wmv,.flv,.mpeg,.mpg,.mts,.m2ts,.ts,.vob,.asf,.3gp,.3g2" multiple><label for="photoGalleryTitle">Photo gallery title (optional)</label><input class="in" id="photoGalleryTitle" maxlength="240" placeholder="Photo gallery"><label>Save to</label>${destinationOptions()}<div class="row"><button class="b p" data-action="saveImages">Add media</button><button class="b" data-action="close">Cancel</button></div>`);
 }
 function createSection(){show(`<b>New section</b><label for="newSectionName">Name</label><input class="in" id="newSectionName" maxlength="100" placeholder="e.g. Design ideas"><div class="row"><button class="b p" data-action="createSection">Create section</button><button class="b" data-action="close">Cancel</button></div>`)}
 async function saveNewSection(){
@@ -365,7 +365,7 @@ function startWatch(id){
  syncWatchUrl(!existing);renderWatchPage(true);
 }
 function orderedMedia(item){return(item.media||[]).slice().sort((a,b)=>(a.position||0)-(b.position||0))}
-function mediaSource(media){const blob=media.convertedBlob instanceof Blob?media.convertedBlob:media.storedBlob instanceof Blob?media.storedBlob:null;if(blob){let url=localMediaUrls.get(blob);if(!url){url=URL.createObjectURL(blob);localMediaUrls.set(blob,url)}return url}return media.convertedDataUrl||media.storedDataUrl||media.playbackUrl||media.sourceUrl||''}
+function mediaSource(media){const blob=media.convertedBlob instanceof Blob?media.convertedBlob:media.storedBlob instanceof Blob?media.storedBlob:null;if(blob){let url=localMediaUrls.get(blob);if(!url){url=URL.createObjectURL(blob);localMediaUrls.set(blob,url)}return url}return pixivImageProxyUrl(media.convertedDataUrl||media.storedDataUrl||media.playbackUrl||media.sourceUrl||'')}
 function localVideoAttributes(item,media){if(!media){media=item;item=V.items.find(entry=>entry.media?.some(candidate=>candidate.id===media.id))}const isLocal=media?.type==='video'&&(media.storedBlob instanceof Blob||media.convertedBlob instanceof Blob||media.storedDataUrl?.startsWith('data:video/')||media.convertedDataUrl?.startsWith('data:video/'));return isLocal?`data-local-video="true" data-video-item="${esc(item?.id||'')}" data-video-media="${esc(media.id)}"${media.convertedBlob instanceof Blob||media.convertedDataUrl?' data-video-converted="true"':''}`:''}
 function originalVideoBlob(media){if(media.storedBlob instanceof Blob)return media.storedBlob;if(media.storedDataUrl?.startsWith('data:video/'))return fetch(media.storedDataUrl).then(response=>response.blob());return null}
 function viewerMedia(item){return orderedMedia(item)}
@@ -436,8 +436,8 @@ function renderDownloadCard(media,index){
  const visual=video&&media.embedUrl&&!media.playbackUrl
   ?`<iframe src="${esc(media.embedUrl)}" title="${esc(media.alt||`Video ${index+1}`)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen loading="lazy"></iframe>`
   :video
-   ?`<video controls src="${esc(mediaSource)}" poster="${esc(media.thumbnailUrl||fallbackThumbnail('video'))}" playsinline preload="metadata"></video>`
-   :`<img src="${esc(mediaSource)}" alt="${esc(media.alt||'')}" loading="lazy" decoding="async">`;
+   ?`<video controls src="${esc(mediaSource)}" poster="${esc(pixivImageProxyUrl(media.thumbnailUrl||fallbackThumbnail('video')))}" playsinline preload="metadata"></video>`
+   :`<img src="${esc(pixivImageProxyUrl(mediaSource))}" alt="${esc(media.alt||'')}" loading="lazy" decoding="async">`;
  const canDownload=video?Boolean(media.providerUrl||media.embedUrl||media.url):!media.embedUrl;
  return`<article class="download-discovery-card"><div class="download-discovery-thumb">${visual}</div><div class="download-discovery-copy"><strong>${esc(video?'Video':'Image')} ${index+1}${quality?` · ${esc(quality)}`:''}</strong><span>${esc(host(mediaSource))}</span></div>${formatSelector}${!video&&media.embedUrl?'<p class="hint">This provider does not expose a downloadable image file.</p>':''}${video&&(media.providerUrl||media.embedUrl)&&!media.playbackUrl?`<button class="b" data-discovery-play="${index}">Play</button>`:''}${canDownload?`<button class="b p" data-discovery-download="${index}">${video?'Download video':'Download image'}</button>`:''}</article>`;
 }
@@ -647,7 +647,7 @@ async function changePlaylistBatch(item,page,start){
 }
 function watchMediaTile(item,media,index){
  const hidden=(item.hiddenMediaUrls||[]).includes(media.sourceUrl);
- const poster=media.thumbnailUrl|| (media.type==='image'?media.sourceUrl:fallbackThumbnail('video'));
+ const poster=pixivImageProxyUrl(media.thumbnailUrl|| (media.type==='image'?media.sourceUrl:fallbackThumbnail('video')));
  const visual=hidden?`<span class="hidden-media-placeholder" aria-hidden="true">${media.type==='video'?'Hidden video':'Hidden image'}</span>`:media.embedUrl&&!media.playbackUrl?`<img src="${esc(poster)}" alt="" loading="lazy"><span class="play-mark" aria-hidden="true">${media.type==='video'?'▶':'↗'}</span>`:media.type==='video'?`<video ${localVideoAttributes(item,media)} src="${esc(mediaSource(media))}" poster="${esc(poster)}" muted playsinline preload="none" tabindex="-1"></video><span class="play-mark" aria-hidden="true">▶</span>`:`<img src="${esc(mediaSource(media))}" alt="${esc(media.alt||item.title)}" loading="lazy" decoding="async">`;
  const ratio=media.width&&media.height?Number(media.height)/Number(media.width):media.type==='video'?0.75:1;
  return`<div class="watch-tile-wrap${hidden?' hidden-media':''}" data-ratio="${Number.isFinite(ratio)&&ratio>0?ratio:1}"><button class="watch-tile" data-watch-media="${index}" aria-label="${hidden?`Hidden ${media.type} ${index+1}`:`Open ${media.type} ${index+1}`}"${hidden?' disabled':''}>${visual}</button><button class="watch-actions-toggle" data-watch-menu aria-label="Show media actions" aria-haspopup="menu" aria-expanded="false">${icon(icons.more)}</button><div class="watch-actions-menu" role="menu"><button class="watch-hide-button" role="menuitem" data-watch-hide="${esc(media.sourceUrl)}">${icon(icons.hide)}<span>${hidden?`Unhide ${media.type}`:`Hide ${media.type}`}</span></button>${hidden?'':downloadButton(item,media,`${icon(icons.download)}<span>Download</span>`,'watch-download-button media-download-button','menuitem')}</div></div>`;
@@ -878,13 +878,13 @@ async function saveNote(){
 }
 async function saveImages(){
  const files=[...($('#imageFiles')?.files||[]),...(V.droppedFiles||[])]; if(!files.length){toast('Choose at least one image or video.');return}
- const sections=selectedSections($('#bx'));let count=0;const errors=[],task=startTask('Adding media',files.length,'media');
+ const sections=selectedSections($('#bx')),galleryMedia=[];let count=0;const errors=[],task=startTask('Adding media',files.length,'media');
  for(const file of files){
   try{
    taskCancelled(task);
    if(file.type.startsWith('image/')){
     const image=await imageFile(file);taskCancelled(task);
-    await storeItem(emptyItem({type:'image',title:file.name.replace(/\.[^.]+$/,''),media:[{type:'image',sourceUrl:'',storedDataUrl:image.data,width:image.width,height:image.height}],thumbnailUrl:image.data,sectionIds:sections}));
+    galleryMedia.push({type:'image',sourceUrl:'',storedDataUrl:image.data,width:image.width,height:image.height,position:galleryMedia.length,alt:file.name.replace(/\.[^.]+$/,'')});
    }else if(isVideoFile(file)){
     const video=await videoFile(file);taskCancelled(task);
     await storeItem(emptyItem({type:'video',title:file.name.replace(/\.[^.]+$/,''),media:[{type:'video',sourceUrl:'',storedBlob:video.blob,mimeType:video.mimeType,size:video.size,position:0}],thumbnailUrl:fallbackThumbnail('video'),sectionIds:sections}));
@@ -893,6 +893,14 @@ async function saveImages(){
   }
   catch(error){if(error.name==='AbortError')break;errors.push(`${file.name}: ${error.message}`)}
   updateTask(task.controller.signal.aborted?'Stopping':'Adding media',++task.completed,files.length,task);
+ }
+ if(galleryMedia.length){
+  try{
+   const galleryTitle=$('#photoGalleryTitle')?.value.trim()||'';
+   const title=galleryMedia.length>1?galleryTitle||'Photo gallery':galleryMedia[0].alt||'Image';
+   const type=galleryMedia.length>1?'gallery':'image';
+   await storeItem(emptyItem({type,title,media:galleryMedia,thumbnailUrl:galleryMedia[0].storedDataUrl,sectionIds:sections}));
+  }catch(error){count-=galleryMedia.length;errors.push(`Photo gallery: ${error.message}`)}
  }
  V.droppedFiles=[];await refreshLibrary();finishTask(task);hide();render();toast(`${countLabel(count,'file')} saved${task.controller.signal.aborted?' before stopping':''}${errors.length?`; ${countLabel(errors.length,'file')} could not be saved. Try a smaller file or check available storage.`:''}.`);if(errors.length)console.error('Media upload errors:',errors);
 }

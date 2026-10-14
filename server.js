@@ -4,7 +4,7 @@ import {fileURLToPath} from 'node:url';
 import {extractPage,openPublicMedia,safeDownloadFilename} from './server/extractor.js';
 import {extractVideoCollection,isVideoCollectionUrl,maxPlaylistItems,playlistPageSize,resolveVideo,startVideoDownload} from './server/playlist.js';
 import {createShareStore,MAX_SHARE_BYTES} from './server/share-store.js';
-import {classify,videoCollectionTitle} from './js/utils.js';
+import {classify,videoCollectionTitle,isPixivImageUrl} from './js/utils.js';
 
 const root=path.dirname(fileURLToPath(import.meta.url));
 const host=process.env.HOST||(process.env.PORT?'0.0.0.0':'127.0.0.1');
@@ -14,6 +14,7 @@ const RATE_WINDOW_MS=60_000;
 const MAX_PREVIEWS_PER_WINDOW=12;
 const MAX_PLAYLISTS_PER_WINDOW=12;
 const MAX_DOWNLOADS_PER_WINDOW=20;
+const MAX_PIXIV_IMAGES_PER_WINDOW=120;
 const MAX_SHARES_PER_WINDOW=10;
 const buckets=new Map();
 const shareStore=createShareStore();
@@ -67,6 +68,14 @@ function allowDownload(request){
  bucket.count++;
  pruneRateBuckets(now);
  return bucket.count<=MAX_DOWNLOADS_PER_WINDOW;
+}
+
+function allowPixivImage(request){
+ const key=`pixiv-image:${getClientAddress(request)}`,now=Date.now();let bucket=buckets.get(key);
+ if(!bucket||now-bucket.start>RATE_WINDOW_MS){bucket={start:now,count:0};buckets.set(key,bucket)}
+ bucket.count++;
+ pruneRateBuckets(now);
+ return bucket.count<=MAX_PIXIV_IMAGES_PER_WINDOW;
 }
 
 async function readJson(request,maxBytes=MAX_BODY_BYTES,limitMessage='Request body exceeds the 16 KB limit.'){
@@ -139,7 +148,7 @@ const server=http.createServer(async(request,response)=>{
   }catch(error){send(response,error.status||400,{error:error.message||'Could not create a share link.'})}
   return;
  }
- const shareMatch=url.pathname.match(/^\/api\/shares\/([A-Za-z0-9_-]{16})$/);
+ const shareMatch=url.pathname.match(/^\/api\/shares\/([A-Za-z0-9_-]{12}|[A-Za-z0-9_-]{16})$/);
  if(shareMatch){
   if(request.method==='GET'){
    const ciphertext=shareStore.get(shareMatch[1]);
@@ -155,7 +164,7 @@ const server=http.createServer(async(request,response)=>{
   send(response,405,{error:'Use GET to retrieve encrypted share data or DELETE to consume it.'});
   return;
  }
- const shortLinkMatch=url.pathname.match(/^\/s\/([A-Za-z0-9_-]{16})$/);
+ const shortLinkMatch=url.pathname.match(/^\/s\/([A-Za-z0-9_-]{12}|[A-Za-z0-9_-]{16})$/);
  if(shortLinkMatch){
   if(request.method!=='GET'){response.writeHead(405,{'allow':'GET','cache-control':'no-store'}).end();return}
   response.writeHead(302,{'location':`/library.html#grabit-share-id=${shortLinkMatch[1]}`,'cache-control':'no-store','referrer-policy':'no-referrer','x-content-type-options':'nosniff'}).end();
@@ -267,6 +276,23 @@ const server=http.createServer(async(request,response)=>{
    if(child)child.kill();
    if(response.headersSent)response.destroy(error);else send(response,error.status||422,{error:error.message||'Video download failed.'});
   }
+  return;
+ }
+ if(url.pathname==='/api/pixiv-image'){
+  if(request.method!=='GET'){send(response,405,{error:'Use GET to display a Pixiv image.'});return}
+  if(!allowPixivImage(request)){send(response,429,{error:'Too many Pixiv image requests. Wait a minute and retry.'});return}
+  const mediaUrl=url.searchParams.get('url')||'';
+  if(mediaUrl.length>2048||!isPixivImageUrl(mediaUrl)){send(response,400,{error:'Provide a valid Pixiv image CDN URL.'});return}
+  try{
+   const result=await openPublicMedia(mediaUrl);
+   if(!result.contentType.startsWith('image/')){result.stream.destroy();send(response,415,{error:'The Pixiv CDN did not return an image.'});return}
+   const headers={'content-type':result.contentType,'cache-control':'private, max-age=300','x-content-type-options':'nosniff','referrer-policy':'no-referrer','content-security-policy':"default-src 'none'; sandbox"};
+   if(/^\d+$/.test(String(result.contentLength||'')))headers['content-length']=result.contentLength;
+   response.writeHead(200,headers);
+   response.on('close',()=>{if(!response.writableFinished)result.stream.destroy()});
+   result.stream.on('error',error=>{console.error('Pixiv image stream failed:',error);response.destroy(error)});
+   result.stream.pipe(response);
+  }catch(error){if(response.headersSent){response.destroy(error)}else send(response,error.status||422,{error:error.message||'Pixiv image fetch failed.'})}
   return;
  }
  if(url.pathname==='/api/download'){
