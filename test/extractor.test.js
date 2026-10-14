@@ -4,7 +4,7 @@ import http from 'node:http';
 import net from 'node:net';
 import {Readable} from 'node:stream';
 import {brotliCompressSync,deflateSync,gzipSync} from 'node:zlib';
-import {parsePage,parsePixivPages,bestSrcsetCandidate,srcsetCandidates,resolvePublicAddress,createPinnedLookup,decompress,safeDownloadFilename,downloadPublicMedia,openPublicMedia,mediaRequestHeaders,extractorLimits} from '../server/extractor.js';
+import {parsePage,parsePixivPages,parsePixivUgoira,bestSrcsetCandidate,srcsetCandidates,resolvePublicAddress,createPinnedLookup,decompress,safeDownloadFilename,downloadPublicMedia,openPublicMedia,mediaRequestHeaders,extractorLimits} from '../server/extractor.js';
 import {isVideoCollectionUrl,parseResolvedVideo,parseYtDlpOutput,parseYtDlpPlaylist,ytDlpTargetUrl} from '../server/playlist.js';
 import {createPublicProxy} from '../server/public-proxy.js';
 import {videoEmbedUrl,socialMediaEmbed,videoCollectionTitle,isPixivImageUrl,pixivImageProxyUrl} from '../js/utils.js';
@@ -171,6 +171,27 @@ test('extracts every Pixiv image from a multi-page artwork',()=>{
  assert.equal(result.mediaCount,11);
  assert.equal(result.truncated,false);
  assert.equal(result.media[10].url,'https://i.pximg.net/img-original/artwork_p10.png');
+});
+
+test('parses safe Pixiv ugoira archive and frame metadata',()=>{
+ const result=parsePixivUgoira({
+  error:false,
+  body:{
+   zip_urls:{original:'https://i.pximg.net/img-zip-ugoira/123_ugoira1920x1080.zip'},
+   src:'https://i.pximg.net/img-master/123_p0_master1200.jpg',
+   frames:[{file:'000000.jpg',delay:125},{file:'000001.jpg',delay:80}]
+  }
+ },'https://www.pixiv.net/artworks/123','https://www.pixiv.net/artworks/123');
+ assert.equal(result.type,'video');
+ assert.equal(result.url,'https://www.pixiv.net/artworks/123');
+ assert.equal(result.thumbnailUrl,'https://i.pximg.net/img-master/123_p0_master1200.jpg');
+ assert.deepEqual(result.pixivUgoira.frames,[{file:'000000.jpg',delay:125},{file:'000001.jpg',delay:80}]);
+ assert.throws(()=>parsePixivUgoira({
+  error:false,body:{zip_urls:{original:'https://evil.example/animation.zip'},frames:[{file:'frame.jpg',delay:50}]}
+ },'https://www.pixiv.net/artworks/123','https://www.pixiv.net/artworks/123'),/valid ugoira animation metadata/);
+ assert.throws(()=>parsePixivUgoira({
+  error:false,body:{zip_urls:{original:'https://i.pximg.net/animation.zip'},frames:[{file:'../private.jpg',delay:50}]}
+ },'https://www.pixiv.net/artworks/123','https://www.pixiv.net/artworks/123'),/invalid ugoira frame metadata/);
 });
 
 test('prefers the highest-resolution responsive image candidate',()=>{

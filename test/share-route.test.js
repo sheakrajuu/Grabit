@@ -7,6 +7,7 @@ import {createServer} from 'node:net';
 import {once} from 'node:events';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {PDFDocument} from 'pdf-lib';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 
@@ -85,6 +86,18 @@ test('share routes accept and return opaque ciphertext only, then consume it',as
  const invalidPixivImage=await fetch(`${baseUrl}/api/pixiv-image?url=${encodeURIComponent('https://images.example/image.jpg')}`);
  assert.equal(invalidPixivImage.status,400);
  assert.match((await invalidPixivImage.json()).error,/Pixiv image CDN URL/);
+ const invalidUgoira=await fetch(`${baseUrl}/api/pixiv-ugoira?url=${encodeURIComponent('https://images.example/animation.zip')}`);
+ assert.equal(invalidUgoira.status,400);
+ assert.match((await invalidUgoira.json()).error,/Pixiv animation archive URL/);
+ const emptyPdf=await fetch(`${baseUrl}/api/pdf`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({images:[]})});
+ assert.equal(emptyPdf.status,400);
+ assert.match((await emptyPdf.json()).error,/Select between 1 and 200 images/);
+ const imageData='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jDf0AAAAASUVORK5CYII=';
+ const galleryPdf=await fetch(`${baseUrl}/api/pdf`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({images:[{data:imageData}]})});
+ assert.equal(galleryPdf.status,200);
+ assert.equal(galleryPdf.headers.get('content-type'),'application/pdf');
+ const parsedPdf=await PDFDocument.load(Buffer.from(await galleryPdf.arrayBuffer()));
+ assert.equal(parsedPdf.getPages().length,1);
 
  const plaintext='private-library-content-must-not-be-stored';
  const plaintextResponse=await fetch(`${baseUrl}/api/shares`,{

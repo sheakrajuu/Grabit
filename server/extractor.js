@@ -180,6 +180,28 @@ export function parsePixivPages(payload,pageUrl,limit=MAX_MEDIA){
  return{media:media.slice(0,limit),mediaCount:Math.min(media.length,limit),truncated:media.length>limit};
 }
 
+export function parsePixivUgoira(payload,pageUrl,artworkUrl){
+ const body=payload?.body;
+ const zipUrl=pixivCdnUrl(body?.zip_urls?.original||body?.zip_urls?.medium,pageUrl);
+ if(payload?.error!==false||!zipUrl||!new URL(zipUrl).pathname.toLowerCase().endsWith('.zip')||!Array.isArray(body?.frames)||!body.frames.length||body.frames.length>MAX_MEDIA)throw new Error('Pixiv did not return valid ugoira animation metadata.');
+ const frames=body.frames.map(frame=>{
+  const file=String(frame?.file||''),delay=Number(frame?.delay);
+  if(!/^[A-Za-z0-9_.-]{1,200}$/.test(file)||file==='.'||file==='..'||!Number.isFinite(delay)||delay<0||delay>10000)throw new Error('Pixiv returned invalid ugoira frame metadata.');
+  return{file,delay:Math.max(20,delay)};
+ });
+ if(frames.reduce((total,frame)=>total+frame.delay,0)>600000)throw new Error('This Pixiv animation is longer than the 10 minute limit.');
+ const thumbnailUrl=pixivCdnUrl(body?.src,pageUrl)||pixivCdnUrl(body?.originalSrc,pageUrl)||'';
+ return{
+  type:'video',
+  url:artworkUrl,
+  sourceUrl:artworkUrl,
+  providerUrl:artworkUrl,
+  thumbnailUrl,
+  alt:'',
+  pixivUgoira:{zipUrl,frames}
+ };
+}
+
 export function decompress(response){
  return new Promise((resolve,reject)=>{
   const chunks=[];let length=0;
@@ -298,18 +320,25 @@ export async function extractPage(rawUrl){
   const page={...parsePage(html,current.href),sourceUrl:rawUrl,finalUrl:current.href,sourceDomain:current.hostname.replace(/^www\./,'')};
   const artworkId=pixivArtworkId(current);
   if(!artworkId)return page;
-  const apiUrl=new URL(`/ajax/illust/${artworkId}/pages?lang=en`,'https://www.pixiv.net');
-  const apiAddress=await resolvePublicAddress(apiUrl.hostname);
-  if(!apiAddress)throw new Error('Pixiv artwork metadata resolves to a private or unavailable network address.');
-  const apiResponse=await requestPage(apiUrl,apiAddress,{
-   accept:'application/json',
-   referer:`https://www.pixiv.net/artworks/${artworkId}`
-  });
-  if(apiResponse.status<200||apiResponse.status>=300)throw new Error(`Pixiv artwork metadata returned HTTP ${apiResponse.status}.`);
-  let payload;
-  try{payload=JSON.parse(apiResponse.body.toString('utf8'))}catch{throw new Error('Pixiv returned invalid artwork image metadata.')}
-  const artwork=parsePixivPages(payload,current.href);
-  return{...page,...artwork};
+  const referer=`https://www.pixiv.net/artworks/${artworkId}`;
+  const fetchArtworkJson=async endpoint=>{
+   const apiUrl=new URL(endpoint,'https://www.pixiv.net');
+   const apiAddress=await resolvePublicAddress(apiUrl.hostname);
+   if(!apiAddress)throw new Error('Pixiv artwork metadata resolves to a private or unavailable network address.');
+   const apiResponse=await requestPage(apiUrl,apiAddress,{accept:'application/json',referer});
+   if(apiResponse.status===401||apiResponse.status===403)throw new Error('Pixiv requires sign-in or age confirmation for this artwork. Grabit cannot use your Pixiv login; open the artwork on Pixiv or try a publicly accessible post.');
+   if(apiResponse.status<200||apiResponse.status>=300)throw new Error(`Pixiv artwork metadata returned HTTP ${apiResponse.status}.`);
+   try{return JSON.parse(apiResponse.body.toString('utf8'))}catch{throw new Error('Pixiv returned invalid artwork metadata.')}
+  };
+  const detail=await fetchArtworkJson(`/ajax/illust/${artworkId}?lang=en`);
+  if(detail?.error!==false||!detail.body)throw new Error('Pixiv did not return public artwork details. This post may be age-restricted and require Pixiv sign-in or age confirmation; Grabit cannot use your Pixiv login.');
+  if(Number(detail.body.illustType)===2){
+   const ugoira=await fetchArtworkJson(`/ajax/illust/${artworkId}/ugoira_meta?lang=en`);
+   const animation=parsePixivUgoira(ugoira,current.href,`https://www.pixiv.net/artworks/${artworkId}`);
+   return{...page,title:detail.body.illustTitle||page.title,media:[animation],mediaCount:1,truncated:false};
+  }
+  const artwork=parsePixivPages(await fetchArtworkJson(`/ajax/illust/${artworkId}/pages?lang=en`),current.href);
+  return{...page,title:detail.body.illustTitle||page.title,...artwork};
  }
  throw new Error('Could not follow the webpage redirect.');
 }

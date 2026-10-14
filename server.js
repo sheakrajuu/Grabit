@@ -1,7 +1,9 @@
 import http from 'node:http';
 import path from 'node:path';
+import {Transform} from 'node:stream';
 import {fileURLToPath} from 'node:url';
 import {extractPage,openPublicMedia,safeDownloadFilename} from './server/extractor.js';
+import {createImagePdf,MAX_PDF_IMAGES} from './server/pdf.js';
 import {extractVideoCollection,isVideoCollectionUrl,maxPlaylistItems,playlistPageSize,resolveVideo,startVideoDownload} from './server/playlist.js';
 import {createShareStore,MAX_SHARE_BYTES} from './server/share-store.js';
 import {classify,videoCollectionTitle,isPixivImageUrl} from './js/utils.js';
@@ -10,6 +12,8 @@ const root=path.dirname(fileURLToPath(import.meta.url));
 const host=process.env.HOST||(process.env.PORT?'0.0.0.0':'127.0.0.1');
 const port=Number(process.env.PORT||3000);
 const MAX_BODY_BYTES=16*1024;
+const MAX_PDF_BODY_BYTES=110*1024*1024;
+const MAX_PIXIV_ARCHIVE_BYTES=80*1024*1024;
 const RATE_WINDOW_MS=60_000;
 const MAX_PREVIEWS_PER_WINDOW=12;
 const MAX_PLAYLISTS_PER_WINDOW=12;
@@ -213,7 +217,7 @@ const server=http.createServer(async(request,response)=>{
     if(knownCollection&&collectionError){console.warn('Could not load all media from a collection:',collectionError);result={...page,refetchOnOpen:true,mediaWarning:'Some media could not be loaded.'}}
    }else throw collectionError||pageError||new Error('Could not preview this public URL.');
    send(response,200,result);
-  }catch(error){console.warn('Page preview failed:',error);send(response,error.status||422,{error:'Could not prepare this page preview.'})}
+  }catch(error){console.warn('Page preview failed:',error);send(response,error.status||422,{error:error.message||'Could not prepare this page preview.'})}
   return;
  }
  if(url.pathname==='/api/playlist'){
@@ -293,6 +297,44 @@ const server=http.createServer(async(request,response)=>{
    result.stream.on('error',error=>{console.error('Pixiv image stream failed:',error);response.destroy(error)});
    result.stream.pipe(response);
   }catch(error){if(response.headersSent){response.destroy(error)}else send(response,error.status||422,{error:error.message||'Pixiv image fetch failed.'})}
+  return;
+ }
+ if(url.pathname==='/api/pixiv-ugoira'){
+  if(request.method!=='GET'){send(response,405,{error:'Use GET to fetch a Pixiv animation archive.'});return}
+  if(!allowPixivImage(request)){send(response,429,{error:'Too many Pixiv media requests. Wait a minute and retry.'});return}
+  const mediaUrl=url.searchParams.get('url')||'';
+  if(mediaUrl.length>2048||!isPixivImageUrl(mediaUrl)||!new URL(mediaUrl).pathname.toLowerCase().endsWith('.zip')){send(response,400,{error:'Provide a valid Pixiv animation archive URL.'});return}
+  try{
+   const result=await openPublicMedia(mediaUrl);
+   if(!['application/zip','application/x-zip-compressed','application/octet-stream'].includes(result.contentType)){
+    result.stream.destroy();send(response,415,{error:'The Pixiv CDN did not return an animation ZIP archive.'});return;
+   }
+   const declaredLength=Number(result.contentLength);
+   if(Number.isFinite(declaredLength)&&declaredLength>MAX_PIXIV_ARCHIVE_BYTES){result.stream.destroy();send(response,413,{error:'The Pixiv animation archive exceeds the 80 MB limit.'});return}
+   let length=0;
+   const limiter=new Transform({transform(chunk,encoding,callback){
+    length+=chunk.length;
+    if(length>MAX_PIXIV_ARCHIVE_BYTES)callback(Object.assign(new Error('The Pixiv animation archive exceeds the 80 MB limit.'),{status:413}));
+    else callback(null,chunk);
+   }});
+   response.writeHead(200,{'content-type':'application/zip','content-disposition':'attachment; filename="pixiv-animation.zip"','cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'});
+   response.on('close',()=>{if(!response.writableFinished)result.stream.destroy()});
+   limiter.on('error',error=>{console.error('Pixiv animation stream failed:',error);response.destroy(error)});
+   result.stream.on('error',error=>{console.error('Pixiv animation source failed:',error);response.destroy(error)});
+   result.stream.pipe(limiter).pipe(response);
+  }catch(error){if(response.headersSent){response.destroy(error)}else send(response,error.status||422,{error:error.message||'Pixiv animation fetch failed.'})}
+  return;
+ }
+ if(url.pathname==='/api/pdf'){
+  if(request.method!=='POST'){send(response,405,{error:'Use POST to create a PDF.'});return}
+  if(!allowDownload(request)){send(response,429,{error:'Too many downloads. Wait a minute and retry.'});return}
+  try{
+   const payload=await readJson(request,MAX_PDF_BODY_BYTES,'PDF request exceeds the 110 MB limit.');
+   if(!Array.isArray(payload.images)||payload.images.length<1||payload.images.length>MAX_PDF_IMAGES){send(response,400,{error:`Select between 1 and ${MAX_PDF_IMAGES} images for a PDF.`});return}
+   const pdf=await createImagePdf(payload.images);
+   response.writeHead(200,{'content-type':'application/pdf','content-disposition':'attachment; filename="grabit-gallery.pdf"','content-length':pdf.length,'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'});
+   response.end(pdf);
+  }catch(error){console.warn('Gallery PDF creation failed:',error);send(response,error.status||422,{error:error.message||'Could not create the gallery PDF.'})}
   return;
  }
  if(url.pathname==='/api/download'){

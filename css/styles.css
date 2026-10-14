@@ -242,6 +242,11 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .local-video-error .row{margin-top:8px}
 .checklist{display:flex;gap:7px;align-items:center;margin:8px 0;color:var(--tx);font-size:12px}
 .checklist input{accent-color:var(--ac)}
+.pdf-image-options{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;max-height:48vh;overflow:auto;margin-top:12px}
+.pdf-image-option{position:relative;display:grid!important;grid-template-rows:100px auto;gap:5px;min-width:0;margin:0!important;padding:6px;border:1px solid var(--br);border-radius:9px;background:var(--panel);cursor:pointer}
+.pdf-image-option input{position:absolute;top:9px;left:9px;z-index:1;width:17px;height:17px;accent-color:var(--ac)}
+.pdf-image-option img{width:100%;height:100px;object-fit:contain;background:var(--media);border-radius:5px}
+.pdf-image-option span{overflow:hidden;color:var(--tx);font-size:10px;text-overflow:ellipsis;white-space:nowrap}
 .media-list{display:flex;gap:8px;flex-direction:column}
 .media-line{display:flex;gap:8px;align-items:center}
 .media-line input{min-width:0}
