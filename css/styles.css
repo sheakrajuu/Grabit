@@ -1,4 +1,4 @@
-:root{color-scheme:dark;--bg:#0b0b0c;--win:#1c1c1e;--box:#242426;--side:#232325;--card:#2c2c2e;--line:#3a3a3c;--tx:#f2f2f7;--mu:#98989f;--ac:#0a84ff;--ac-strong:#0a84ff;--hover:#ffffff0d;--active:#48484a;--control:#3a3a3c;--media:#303033;--stage:#111;--danger:#ff6961;--danger-strong:#e5484d;--shadow:#0004;--overlay:#000b;--toast:#48484a;--thumb:#606068}
+:root{color-scheme:dark;--bg:#0b0b0c;--win:#1c1c1e;--box:#242426;--side:#090a0c;--card:#2c2c2e;--line:#3a3a3c;--tx:#f2f2f7;--mu:#98989f;--ac:#0a84ff;--ac-strong:#0a84ff;--hover:#ffffff0d;--active:#48484a;--control:#3a3a3c;--media:#303033;--stage:#111;--danger:#ff6961;--danger-strong:#e5484d;--shadow:#0004;--overlay:#000b;--toast:#48484a;--thumb:#606068}
 :root[data-theme="light"]{color-scheme:light;--bg:#eef2f7;--win:#fff;--box:#fff;--side:#f7f9fc;--card:#fff;--line:#dce3ec;--tx:#202b3c;--mu:#627188;--ac:#315fca;--ac-strong:#244da9;--hover:#20304d0a;--active:#e8eef9;--control:#f1f4f8;--media:#e8edf4;--stage:#e8edf4;--danger:#b42332;--danger-strong:#b42332;--shadow:#1b2b441f;--overlay:#17223566;--toast:#243248;--thumb:#8391a5}
 :root[data-theme="light"] *{scrollbar-color:#aab5c5 transparent}
 html{scroll-padding-top:env(safe-area-inset-top,0px)}
@@ -131,6 +131,9 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .preview-page h3{font-size:13px;margin:10px 0;color:var(--tx)}
 .preview-page h3 span{font-size:11px;color:var(--mu);font-weight:400}
 .side{width:220px;flex:none;background:var(--side);padding:14px 10px;overflow:auto;border-right:1px solid var(--line)}
+:root:not([data-theme="light"]) .side{background:linear-gradient(165deg,#111216 0%,#090a0c 52%,#0d0e12 100%);border-right-color:#222328}
+:root:not([data-theme="light"]) .side .nv:hover{background:#ffffff0a}
+:root:not([data-theme="light"]) .side .nv.on{background:#ffffff0d;box-shadow:none}
 .win.hide .side{display:none}
 .brand{font-size:15px;font-weight:650;padding:8px 9px 14px;letter-spacing:.1px}
 .nv{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:7px;cursor:pointer;user-select:none}

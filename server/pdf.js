@@ -25,13 +25,14 @@ async function imageBytes(entry){
  }
  if(typeof entry?.url!=='string'||entry.url.length>2048)throw new Error('Each PDF image must have a valid image URL or JPEG/PNG data.');
  const result=await openPublicMedia(entry.url);
- if(!['image/jpeg','image/png'].includes(result.contentType)){
+ const type=result.contentType==='image/jpg'||result.contentType==='image/pjpeg'?'image/jpeg':result.contentType;
+ if(!['image/jpeg','image/png'].includes(type)){
   result.stream.destroy();
   throw new Error('Only publicly accessible JPEG and PNG images can be added to a PDF.');
  }
  const length=Number(result.contentLength);
  if(Number.isFinite(length)&&length>MAX_PDF_IMAGE_BYTES){result.stream.destroy();throw Object.assign(new Error('An image exceeds the 25 MB PDF limit.'),{status:413})}
- return{bytes:await readBoundedStream(result.stream,MAX_PDF_IMAGE_BYTES),type:result.contentType};
+ return{bytes:await readBoundedStream(result.stream,MAX_PDF_IMAGE_BYTES),type};
 }
 
 export async function createImagePdf(images){

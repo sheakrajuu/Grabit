@@ -164,7 +164,7 @@ function card(item){
  const image=item.type==='note'?'':`<img class="art" src="${esc(thumb)}" alt="" loading="lazy" decoding="async">`;
  return `<article class="card${item.type==='note'?' note-card':''}${V.selectMode?' selecting':''}" data-id="${esc(item.id)}" tabindex="0" aria-label="${esc(item.title)}">
  ${image}<span class="bd">${labels[item.type]||'ITEM'}</span><div class="cap">${esc(item.title||'Untitled')}</div>${item.sourceDomain?`<div class="source">${esc(item.sourceDomain)}</div>`:''}
- ${V.selectMode?'':`<button class="card-menu-button" data-card-menu="${esc(item.id)}" aria-label="More actions for ${esc(item.title)}" aria-haspopup="menu" aria-expanded="false">${icon(icons.more)}</button><div class="card-menu" role="menu"><button role="menuitem" data-card-action="moveSection" data-id="${esc(item.id)}">Move to section…</button>${item.sectionIds?.length?`<button role="menuitem" data-card-action="toggleInbox" data-id="${esc(item.id)}">${item.hiddenFromInbox?'Show in Inbox':'Hide from Inbox'}</button>`:''}${item.type==='gallery'?`<button role="menuitem" data-card-action="galleryPdf" data-id="${esc(item.id)}">Download as PDF…</button>`:''}<button role="menuitem" data-card-action="share" data-id="${esc(item.id)}">Share item…</button><button role="menuitem" data-card-action="edit" data-id="${esc(item.id)}">Edit</button><button role="menuitem" data-card-action="favorite" data-id="${esc(item.id)}">${item.isFavorite?'Remove favorite':'Add to favorites'}</button><button role="menuitem" data-card-action="archive" data-id="${esc(item.id)}">${item.isArchived?'Restore':'Archive'}</button><button role="menuitem" class="d" data-card-action="delete" data-id="${esc(item.id)}">Delete</button></div>`}${V.selectMode?`<input class="select-card" type="checkbox" data-select="${esc(item.id)}" aria-label="Select ${esc(item.title)}"${V.selected.has(item.id)?' checked':''}>`:''}</article>`;
+ ${V.selectMode?'':`<button class="card-menu-button" data-card-menu="${esc(item.id)}" aria-label="More actions for ${esc(item.title)}" aria-haspopup="menu" aria-expanded="false">${icon(icons.more)}</button><div class="card-menu" role="menu"><button role="menuitem" data-card-action="moveSection" data-id="${esc(item.id)}">Move to section…</button>${item.sectionIds?.length?`<button role="menuitem" data-card-action="toggleInbox" data-id="${esc(item.id)}">${item.hiddenFromInbox?'Show in Inbox':'Hide from Inbox'}</button>`:''}${item.type==='gallery'||item.type==='bookmark'&&item.sourceUrls?.length>1?`<button role="menuitem" data-card-action="galleryPdf" data-id="${esc(item.id)}">Download as PDF…</button>`:''}<button role="menuitem" data-card-action="share" data-id="${esc(item.id)}">Share item…</button><button role="menuitem" data-card-action="edit" data-id="${esc(item.id)}">Edit</button><button role="menuitem" data-card-action="favorite" data-id="${esc(item.id)}">${item.isFavorite?'Remove favorite':'Add to favorites'}</button><button role="menuitem" data-card-action="archive" data-id="${esc(item.id)}">${item.isArchived?'Restore':'Archive'}</button><button role="menuitem" class="d" data-card-action="delete" data-id="${esc(item.id)}">Delete</button></div>`}${V.selectMode?`<input class="select-card" type="checkbox" data-select="${esc(item.id)}" aria-label="Select ${esc(item.title)}"${V.selected.has(item.id)?' checked':''}>`:''}</article>`;
 }
 function positionCardMenu(menu,button){
  const margin=8,trigger=button.getBoundingClientRect(),bounds=menu.getBoundingClientRect();
@@ -368,32 +368,50 @@ function detail(id){
 }
 function galleryPdfDialog(id){
  const item=V.items.find(entry=>entry.id===id),images=item?.media.filter(media=>media.type==='image')||[];
- if(!item||!images.length){toast('This gallery has no images to export.');return}
- show(`<b>Download gallery as PDF</b><p class="hint">Select the images to include. Each image gets its own uncropped page sized to its proportions. Up to 200 images per PDF.</p><div class="pdf-image-options">${images.map((media,index)=>`<label class="pdf-image-option"><input type="checkbox" data-pdf-image="${index}"${index<200?' checked':''}><img src="${esc(mediaSource(media))}" alt=""><span>${esc(media.alt||`Image ${index+1}`)}</span></label>`).join('')}</div>${images.length>200?'<p class="hint" role="status">Only the first 200 images are selected by default.</p>':''}<div class="row"><button class="b p" data-action="downloadGalleryPdf" data-id="${esc(id)}">Create and download PDF</button><button class="b" data-action="close">Cancel</button></div>`);
+ const links=item?.sourceUrls?.length?item.sourceUrls:item?.sourceUrl?[item.sourceUrl]:[];
+ if(!item||(!images.length&&links.length<2)){toast('This gallery has no images or image links to export.');return}
+ const imageOptions=images.length?`<p class="hint">Select the images to include. Each image gets its own uncropped page sized to its proportions. Up to 200 images per PDF.</p><div class="pdf-image-options">${images.map((media,index)=>`<label class="pdf-image-option"><input type="checkbox" data-pdf-image="${index}"${index<200?' checked':''}><img src="${esc(mediaSource(media))}" alt=""><span>${esc(media.alt||`Image ${index+1}`)}</span></label>`).join('')}</div>${images.length>200?'<p class="hint" role="status">Only the first 200 images are selected by default.</p>':''}`:`<p class="hint">Grabit will find the publicly accessible images on all ${links.length} saved links and combine them into one PDF. Up to 200 images per PDF.</p>`;
+ show(`<b>Download gallery as PDF</b>${imageOptions}<div class="row"><button class="b p" data-action="downloadGalleryPdf" data-id="${esc(id)}">${images.length?'Create and download PDF':'Find images and create PDF'}</button><button class="b" data-action="close">Cancel</button></div>`);
 }
 async function downloadGalleryPdf(id){
  const item=V.items.find(entry=>entry.id===id);
  if(!item)return;
- const selected=[...$('#bx').querySelectorAll('[data-pdf-image]:checked')].map(input=>item.media.filter(media=>media.type==='image')[Number(input.dataset.pdfImage)]).filter(Boolean);
- if(!selected.length){toast('Select at least one image for the PDF.');return}
+ const availableImages=item.media.filter(media=>media.type==='image');
+ const selected=[...$('#bx').querySelectorAll('[data-pdf-image]:checked')].map(input=>availableImages[Number(input.dataset.pdfImage)]).filter(Boolean);
+ const links=item.sourceUrls?.length?item.sourceUrls:item.sourceUrl?[item.sourceUrl]:[];
+ if(availableImages.length&&!selected.length||!availableImages.length&&links.length<2){toast('Select at least one image for the PDF.');return}
  const button=$('[data-action="downloadGalleryPdf"]');if(button){button.disabled=true;button.textContent='Creating PDF…'}
  try{
-  const images=await Promise.all(selected.map(async media=>{
-   const data=media.convertedDataUrl||media.storedDataUrl;
-   if(data)return{data};
-   const blob=media.convertedBlob instanceof Blob?media.convertedBlob:media.storedBlob instanceof Blob?media.storedBlob:null;
-   if(blob)return{data:await blobAsDataUrl(blob)};
-   const source=media.sourceUrl||media.url;
-   if(!source||source.startsWith('blob:')||source.startsWith('data:'))throw new Error('A selected image has no readable source.');
-   return{url:source};
-  }));
+  let images,linksWithoutImages=0;
+  if(availableImages.length){
+   images=await Promise.all(selected.map(async media=>{
+    const data=media.convertedDataUrl||media.storedDataUrl;
+    if(data)return{data};
+    const blob=media.convertedBlob instanceof Blob?media.convertedBlob:media.storedBlob instanceof Blob?media.storedBlob:null;
+    if(blob)return{data:await blobAsDataUrl(blob)};
+    const source=media.sourceUrl||media.url;
+    if(!source||source.startsWith('blob:')||source.startsWith('data:'))throw new Error('A selected image has no readable source.');
+    return{url:source};
+   }));
+  }else{
+   const pages=await Promise.all(links.map(url=>previewUrl(url,{includePlaylist:false})));
+   const imagesByPage=pages.map(page=>(page.media||[]).filter(media=>media.type==='image'&&!media.embedUrl).map(media=>{
+    const source=media.url||media.sourceUrl;
+    if(!source)throw new Error('A linked image has no downloadable source.');
+    return{url:source};
+   }));
+   images=imagesByPage.flat();
+   if(!images.length)throw new Error('No downloadable images were found on these links.');
+   if(images.length>200)throw new Error('These links contain more than 200 images. Export smaller groups of links.');
+   linksWithoutImages=imagesByPage.filter(pageImages=>!pageImages.length).length;
+  }
   const response=await fetch('/api/pdf',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({images})});
   if(!response.ok){let message='Could not create the gallery PDF.';try{message=(await response.json()).error||message}catch{}throw new Error(message)}
   const blob=await response.blob();
   if(!blob.size||blob.type!=='application/pdf')throw new Error('The server returned an invalid PDF file.');
   const objectUrl=URL.createObjectURL(blob),anchor=document.createElement('a'),filename=`${item.title.replace(/[<>:"/\\|?*\u0000-\u001f]/g,'_')||'gallery'}.pdf`;
   anchor.href=objectUrl;anchor.download=filename;document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(objectUrl),60_000);
-  hide();toast(`PDF download started: ${filename}`);
+  hide();toast(`PDF download started: ${filename}${linksWithoutImages?`; no images found on ${linksWithoutImages} of ${links.length} links`:''}`);
  }catch(error){console.error('Could not create gallery PDF:',error);toast(error.message||'Could not create the gallery PDF.')}
  finally{if(button?.isConnected){button.disabled=false;button.textContent='Create and download PDF'}}
 }
@@ -408,7 +426,14 @@ function mediaSource(media){const blob=media.convertedBlob instanceof Blob?media
 function localVideoAttributes(item,media){if(!media){media=item;item=V.items.find(entry=>entry.media?.some(candidate=>candidate.id===media.id))}const isLocal=media?.type==='video'&&(media.storedBlob instanceof Blob||media.convertedBlob instanceof Blob||media.storedDataUrl?.startsWith('data:video/')||media.convertedDataUrl?.startsWith('data:video/'));return isLocal?`data-local-video="true" data-video-item="${esc(item?.id||'')}" data-video-media="${esc(media.id)}"${media.convertedBlob instanceof Blob||media.convertedDataUrl?' data-video-converted="true"':''}`:''}
 function originalVideoBlob(media){if(media.storedBlob instanceof Blob)return media.storedBlob;if(media.storedDataUrl?.startsWith('data:video/'))return fetch(media.storedDataUrl).then(response=>response.blob());return null}
 function viewerMedia(item){return orderedMedia(item)}
+function isDirectImageLinkGallery(item){
+ const pages=item.sourcePages||[];
+ return item.type==='gallery'&&pages.length>1&&pages.every(page=>page.media?.length===1&&page.media[0].type==='image'&&normalized(page.url)===normalized(page.media[0].sourceUrl||page.media[0].url));
+}
 function sourcePages(item){
+ if(item.type==='gallery'&&(item.galleryLinksGrouped||isDirectImageLinkGallery(item))){
+  return[{url:item.sourceUrl||item.sourceUrls?.[0]||'',title:item.title||host(item.sourceUrl),description:item.description||'',media:orderedMedia(item),index:0,extracted:true}];
+ }
  if(Array.isArray(item.sourcePages)&&item.sourcePages.length)return item.sourcePages.map((page,index)=>({...page,index,media:Array.isArray(page.media)?page.media:item.media.filter(media=>(media.pageIndex||0)===index)}));
  return[{url:item.sourceUrl||'',title:item.title||host(item.sourceUrl),description:item.description||'',media:orderedMedia(item),index:0}];
 }
@@ -530,7 +555,7 @@ async function discoverDownloads(start=1,rawUrl=''){
  }
 }
 function embedPage(url,data){
- const page={url,canonicalUrl:data.canonicalUrl||normalized(url),title:data.title||host(url),description:data.description||'',media:Array.isArray(data.media)?data.media:[],refetchOnOpen:data.refetchOnOpen===true,mediaWarning:data.mediaWarning||'',previewWarning:data.previewWarning||'',truncated:!!data.truncated,playlistPaging:data.playlistPaging===true||videoCollectionTitle(url)!=='',playlistStart:Number.isSafeInteger(data.start)?data.start:1,playlistHasMore:data.hasMore===true};
+ const page={url,finalUrl:data.finalUrl||url,canonicalUrl:data.canonicalUrl||normalized(url),title:data.title||host(url),description:data.description||'',media:Array.isArray(data.media)?data.media:[],refetchOnOpen:data.refetchOnOpen===true,mediaWarning:data.mediaWarning||'',previewWarning:data.previewWarning||'',truncated:!!data.truncated,playlistPaging:data.playlistPaging===true||videoCollectionTitle(url)!=='',playlistStart:Number.isSafeInteger(data.start)?data.start:1,playlistHasMore:data.hasMore===true};
  const embed=socialMediaEmbed(url);
  if(embed&&!page.playlistPaging&&!(embed.type==='video'&&page.media.filter(media=>media.type==='video').length>1)){
   const sourceMedia=page.media.find(media=>media.type===embed.type)||page.media.find(media=>media.type==='image')||page.media.find(media=>media.type==='video');
@@ -559,10 +584,17 @@ async function loadWatchPage(item){
  watch.loading=true;watch.extractionAttempted=true;renderWatchPage(false,'Loading page media…');
  try{
   const savedPages=Array.isArray(item.sourcePages)?item.sourcePages:[];
-  const urls=Array.isArray(item.sourceUrls)&&item.sourceUrls.length?item.sourceUrls:[item.sourceUrl];
+  const localGallery=item.type==='gallery'&&!item.sourceUrl&&!item.sourceUrls?.length&&item.media.some(media=>media.type==='image'&&(media.storedDataUrl||media.storedBlob instanceof Blob||media.convertedDataUrl||media.convertedBlob instanceof Blob));
+  const groupedGallery=item.type==='gallery'&&(item.galleryLinksGrouped||isDirectImageLinkGallery(item));
+  const urls=localGallery?[]:groupedGallery?[item.sourceUrl||item.sourceUrls?.[0]||savedPages[0]?.url]:Array.isArray(item.sourceUrls)&&item.sourceUrls.length?item.sourceUrls:[item.sourceUrl];
   const pages=[];
   for(let index=0;index<urls.length;index++){
    const url=urls[index];if(!url||!validUrl(url))continue;
+   if(groupedGallery){
+    const media=orderedMedia(item).map((entry,position)=>({...entry,type:entry.type||'image',sourceUrl:entry.sourceUrl||entry.url||'',position,pageIndex:0}));
+    pages.push({...savedPages[0],url,title:item.title,index:0,extracted:true,media});
+    continue;
+   }
    const saved=savedPages.find(page=>normalized(page.url)===normalized(url));
    if(saved?.playlistPaging){
     const start=saved.playlistStart||1;
@@ -601,7 +633,16 @@ async function loadWatchPage(item){
     pages.push({...saved,url,canonicalUrl:saved?.canonicalUrl||normalized(url),title:saved?.title||host(url),description:saved?.description||'',media:cachedMedia,index,extracted:cachedMedia.length>0,...(cachedMedia.length?{mediaWarning:'Some media could not be refreshed.'}:{error:'This page could not be previewed. You can still open the original link.'})});
    }
   }
+  if(localGallery){
+   pages.push({url:'',title:item.title,description:item.description||'',index:0,extracted:true,media:orderedMedia(item).map((media,position)=>({...media,position,pageIndex:0}))});
+  }
   if(!pages.length)throw new Error('No valid page URLs are saved for this item.');
+  const linkedImageGroup=item.type==='bookmark'&&item.sourceUrls?.length>1&&pages.length===item.sourceUrls.length&&pages.every(page=>page.media.length===1&&page.media[0].type==='image'&&normalized(page.finalUrl||page.url)===normalized(page.media[0].url||page.media[0].sourceUrl));
+  if(linkedImageGroup){
+   const media=pages.flatMap(page=>page.media).map((entry,position)=>({...entry,sourceUrl:entry.url||entry.sourceUrl,position,pageIndex:0}));
+   item.type='gallery';item.galleryLinksGrouped=true;
+   pages.splice(0,pages.length,{...pages[0],title:item.title,media});
+  }
   item.sourcePages=pages.map((page,index)=>({...page,index,media:page.media.map((media,position)=>({...media,type:media.type||'image',sourceUrl:media.url||media.sourceUrl||'',position:media.position??position,pageIndex:index,thumbnailUrl:media.thumbnailUrl||''}))}));
   item.media=item.sourcePages.flatMap(page=>page.media);
   if(item.type==='bookmark'&&item.sourcePages.some(page=>page.playlistPaging))item.type='playlist';
@@ -894,10 +935,12 @@ async function continueImport(pending,mode){
   taskCancelled(task);
   if(otherUrls.length>1&&kinds.every(kind=>kind==='image'||kind==='video')){
    const media=otherUrls.map((url,position)=>({type:kinds[position],sourceUrl:url,thumbnailUrl:kinds[position]==='image'?url:fallbackThumbnail('video'),position,pageIndex:position}));
-   const pages=otherUrls.map((url,index)=>({url,canonicalUrl:normalized(url),title:host(url)||url,description:'',index,extracted:true,media:[media[index]]}));
    const type=kinds.every(kind=>kind==='video')?'playlist':'gallery';
+   const pages=type==='gallery'
+    ?[{url:otherUrls[0],canonicalUrl:normalized(otherUrls[0]),title:title||'Image gallery',description,index:0,extracted:true,media:media.map((entry,position)=>({...entry,position,pageIndex:0}))}]
+    :otherUrls.map((url,index)=>({url,canonicalUrl:normalized(url),title:host(url)||url,description:'',index,extracted:true,media:[media[index]]}));
    const item=emptyItem({type,title:title||(type==='playlist'?'Video playlist':'Image gallery'),description,sourceUrl:otherUrls[0],media,thumbnailUrl:media.find(entry=>entry.type==='image')?.sourceUrl||media[0].thumbnailUrl,sectionIds:chosen});
-   item.sourceUrls=otherUrls;item.sourcePages=pages;await storeItem(item);saved++;task.completed+=otherUrls.length;updateTask('Saving links',task.completed,task.total,task);
+   item.sourceUrls=otherUrls;item.sourcePages=pages;if(type==='gallery')item.galleryLinksGrouped=true;await storeItem(item);saved++;task.completed+=otherUrls.length;updateTask('Saving links',task.completed,task.total,task);
   }else if(otherUrls.length>1&&kinds.includes('bookmark')){
    const pages=otherUrls.map((url,index)=>({url,canonicalUrl:normalized(url),title:host(url)||url,description:'',index,extracted:false,media:[]}));
    const item=emptyItem({type:'bookmark',title:title||'Saved webpages',description,sourceUrl:otherUrls[0],thumbnailUrl:fallbackThumbnail('bookmark'),sectionIds:chosen});

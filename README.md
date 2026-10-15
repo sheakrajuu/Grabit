@@ -74,10 +74,10 @@ To share your full library, open **Export library → Create encrypted one-time 
 - Inbox as the unified view of non-archived items unless hidden there; hidden items appear only in their assigned sections (and Archived when archived). Favorites, Recently added, Archived, and named sections remain separate views.
 - Add bookmarks, direct image/video links, public social-media posts, notes, uploaded images, webpage-extracted image/video groups, and yt-dlp-discovered public video lists supported by its extractors.
 - Responsive Pinterest-style card and gallery grids, thumbnail fallbacks, custom thumbnail URLs, image/video viewers, and browser-native video playback.
-- Card-level three-dot menu for section movement, Inbox visibility, gallery-to-PDF export, single-item sharing, edit, favorite, archive/restore, and delete. Opening a card is read-only; editing is available only from the menu.
+- Card-level three-dot menu for section movement, Inbox visibility, gallery-to-PDF export (including images found across saved link groups), single-item sharing, edit, favorite, archive/restore, and delete. Opening a card is read-only; editing is available only from the menu.
 - Persistent hidden-media selections for a page, plus hide/unhide controls in gallery and playlist viewers.
 - Server-streamed downloads for publicly accessible direct media files without an app-imposed size cap, with a browser-local Download history.
-- Gallery PDF export lets you select images; each image gets an uncropped, custom-proportions page rather than A4. JPEG and PNG only, up to 200 images, 25 MB each, and 80 MB total source data.
+- Gallery PDF export lets you select images; each image gets an uncropped, custom-proportions page rather than A4. Multi-link groups can collect public images from every saved link into one PDF. JPEG and PNG only, up to 200 images, 25 MB each, and 80 MB total source data.
 - One-time library share links that are consumed after successful import, with JSON export backups.
 - Share an individual saved item or multiple selected items without sharing the rest of the library; tags are not part of the library.
 - Search, type filtering, sorting, sections, URL duplicate handling, and multi-select organization tools.
