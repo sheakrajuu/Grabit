@@ -154,7 +154,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .section-manage svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .mw{position:relative;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
 .top{display:flex;align-items:center;gap:9px;min-height:64px;padding:12px 20px;border:0;background:color-mix(in srgb,var(--win) 94%,transparent);transition:padding .42s cubic-bezier(.22,1,.36,1),background-color .42s ease,box-shadow .42s ease}
-.top h1{font-size:17px;font-weight:650;letter-spacing:-.025em;margin:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.top h1{font-size:17px;font-weight:650;letter-spacing:-.025em;margin:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:opacity .2s ease,transform .3s cubic-bezier(.22,1,.36,1),visibility 0s}
 .in{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 11px;outline:0}
 .in:focus{border-color:var(--ac)}
 #q{display:none;width:min(280px,30vw);min-height:38px}
@@ -171,17 +171,17 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 #searchToggle svg{width:19px;height:19px}
 .win.search-open:not(.header-collapsed) .top #q{display:block}
 #main{flex:1;min-height:0;overflow:auto;padding:0 14px 14px;position:relative;scroll-behavior:smooth;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;transition:padding-top .42s cubic-bezier(.22,1,.36,1)}
-.win.header-collapsed .top{position:absolute;top:0;left:0;right:0;z-index:3;display:grid;grid-template-columns:44px minmax(0,1fr) auto 44px;grid-template-rows:44px;grid-template-areas:"menu spacer add searchtoggle";gap:8px;padding:6px 14px;border:0;border-radius:0;background:transparent;box-shadow:none;backdrop-filter:none;transition:padding .42s cubic-bezier(.22,1,.36,1),grid-template-columns .42s cubic-bezier(.22,1,.36,1),grid-template-rows .42s cubic-bezier(.22,1,.36,1)}
+.win.header-collapsed .top{border:0;background:transparent;box-shadow:none;backdrop-filter:none;transition:background-color .3s ease,box-shadow .3s ease}
 .win.header-collapsed .top #sbt{grid-area:menu;width:44px;min-width:44px;height:44px;padding:0;border-radius:50%}
 .win.header-collapsed .top #add{grid-area:add;width:44px;min-width:44px;height:44px;padding:0;border-radius:50%}
 .win.header-collapsed .top #add span{display:none}
-.win.header-collapsed .top h1{position:absolute;visibility:hidden;opacity:0;transform:translateY(-8px);pointer-events:none}
+.win.header-collapsed .top h1{visibility:hidden;opacity:0;transform:translateY(-8px);pointer-events:none;transition:opacity .2s ease,transform .3s cubic-bezier(.22,1,.36,1),visibility 0s linear .2s}
 .win.header-collapsed .top #q{position:absolute;visibility:hidden;opacity:0;pointer-events:none}
 .win.header-collapsed .top #searchToggle{grid-area:searchtoggle;display:inline-flex;width:44px;height:44px;min-width:44px;padding:0;border:0;border-radius:50%;background:color-mix(in srgb,var(--win) 76%,transparent);box-shadow:0 3px 12px var(--shadow);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);transition:background-color .35s ease,box-shadow .35s ease,transform .35s ease,opacity .35s ease}
 .win.header-collapsed .top #searchToggle[hidden]{display:none!important}
 .win.header-collapsed .top #sbt,.win.header-collapsed .top #add{border:0;background:color-mix(in srgb,var(--win) 76%,transparent);box-shadow:0 3px 12px var(--shadow);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);transition:background-color .35s ease,box-shadow .35s ease,transform .35s ease,opacity .35s ease}
-.win.header-collapsed #main{padding-top:64px}
-.win.header-collapsed.search-open .top{grid-template-rows:44px 44px;grid-template-areas:"menu spacer add searchtoggle" "search search search search"}
+.win.header-collapsed.search-open .top{display:grid;grid-template-rows:44px 44px;grid-template-areas:"menu title add searchtoggle" "search search search search"}
+.win.header-collapsed.search-open .top h1{grid-area:title}
 .win.header-collapsed.search-open .top #q{position:relative;visibility:visible;opacity:1;pointer-events:auto;display:block;grid-area:search;width:100%;min-width:0;height:44px;margin-top:4px;padding:0 14px;border:0;border-radius:14px;background:color-mix(in srgb,var(--win) 84%,transparent);box-shadow:0 3px 12px var(--shadow);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);font-size:14px;transition:opacity .28s ease,transform .35s cubic-bezier(.22,1,.36,1),background-color .28s ease}
 .win.header-collapsed.search-open #main{padding-top:108px}
 .tools{display:flex;align-items:center;gap:8px;padding:14px 0 13px;border-bottom:0;flex-wrap:wrap}
@@ -451,17 +451,14 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
  .top #searchToggle{border-radius:50%;background:color-mix(in srgb,var(--control) 86%,transparent);backdrop-filter:blur(16px);box-shadow:0 5px 18px var(--shadow)}
  .top #searchToggle[hidden]{display:none!important}
  .top #searchToggle svg{width:19px;height:19px}
- .win.header-collapsed .top{top:0;grid-template-columns:44px minmax(0,1fr) auto 44px;gap:8px;padding:calc(6px + env(safe-area-inset-top,0px)) 14px 6px}
  .win.header-collapsed .top #sbt,.win.header-collapsed .top #add,.win.header-collapsed .top #searchToggle{border-radius:50%;background:color-mix(in srgb,var(--win) 76%,transparent)}
  .win.header-collapsed .top #sbt:hover,.win.header-collapsed .top #add:hover,.win.header-collapsed .top #searchToggle:hover{background:color-mix(in srgb,var(--control) 86%,transparent)}
- .win.header-collapsed .top h1{position:absolute;visibility:hidden;opacity:0;transform:translateY(-8px);pointer-events:none}
- .win.header-collapsed #main{padding-top:calc(65px + env(safe-area-inset-top,0px))}
+ .win.header-collapsed .top h1{visibility:hidden;opacity:0;transform:translateY(-8px);pointer-events:none;transition:opacity .2s ease,transform .3s cubic-bezier(.22,1,.36,1),visibility 0s linear .2s}
  .win.header-collapsed #main>.tools{position:relative;top:auto;z-index:auto;background:transparent;backdrop-filter:none}
  .win.search-open .top{grid-template-rows:44px 44px;grid-template-areas:"menu title add searchtoggle" "search search search search";background:color-mix(in srgb,var(--win) 94%,transparent)}
  .win.search-open .top #q{display:block;opacity:1;transform:translateY(0)}
- .win.header-collapsed.search-open .top{grid-template-areas:"menu spacer add searchtoggle" "search search search search";background:transparent;box-shadow:none}
+ .win.header-collapsed.search-open .top{grid-template-areas:"menu title add searchtoggle" "search search search search";background:transparent;box-shadow:none}
  .win.header-collapsed.search-open .top #q{margin-top:4px;border:0;background:color-mix(in srgb,var(--win) 84%,transparent);box-shadow:0 3px 12px var(--shadow);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
- .win.header-collapsed.search-open #main{padding-top:calc(109px + env(safe-area-inset-top,0px))}
  #main{padding:0 14px calc(16px + env(safe-area-inset-bottom,0px))}
  #main>.tools{position:sticky;top:0;z-index:2;gap:8px;padding:12px 0 14px;border-bottom:0;background:color-mix(in srgb,var(--win) 94%,transparent);backdrop-filter:blur(16px)}
  .mobile-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;width:100%}
