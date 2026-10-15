@@ -434,7 +434,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
  .win.open .side{transform:translateX(0)}
  .scrim{display:block;position:absolute;inset:0;z-index:4;background:#0000;backdrop-filter:blur(0);opacity:0;visibility:hidden;pointer-events:none;transition:opacity .24s ease,backdrop-filter .24s ease,visibility .24s}
  .win.open .scrim{display:block;position:absolute;inset:0;z-index:4;background:#0008;backdrop-filter:blur(3px);opacity:1;visibility:visible;pointer-events:auto}
- .top{position:relative;z-index:3;grid-template-columns:44px minmax(0,1fr) auto 44px;grid-template-rows:44px;grid-template-areas:"menu title add searchtoggle";gap:8px;padding:calc(10px + env(safe-area-inset-top,0px)) 14px 10px;border:0;background:color-mix(in srgb,var(--win) 94%,transparent);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);transition:grid-template-rows .42s cubic-bezier(.22,1,.36,1),grid-template-columns .42s cubic-bezier(.22,1,.36,1),padding .42s cubic-bezier(.22,1,.36,1),background-color .42s ease,box-shadow .42s ease}
+ .top{position:relative;z-index:3;grid-template-columns:44px minmax(0,1fr) auto 44px;grid-template-rows:44px;grid-template-areas:"menu title add searchtoggle";gap:8px;padding:calc(10px + env(safe-area-inset-top,0px)) 14px 10px;border:0;background:color-mix(in srgb,var(--win) 94%,transparent);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);transition:transform .32s cubic-bezier(.22,1,.36,1),margin-bottom .32s cubic-bezier(.22,1,.36,1),opacity .2s ease,background-color .28s ease,box-shadow .28s ease}
  .top #sbt{grid-area:menu}
  .top h1{grid-area:title;align-self:center;transition:opacity .3s ease,transform .42s cubic-bezier(.22,1,.36,1)}
  .top #add{grid-area:add}
