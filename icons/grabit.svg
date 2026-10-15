@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Grabit</title>
+  <defs>
+    <linearGradient id="frame" x1="112" y1="120" x2="414" y2="410" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8b7cff"/>
+      <stop offset="1" stop-color="#42c6ed"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(-6 -8)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="103" y="132" width="267" height="267" rx="61" stroke="url(#frame)" stroke-width="22" transform="rotate(-8 236.5 265.5)" opacity=".72"/>
+    <rect x="141" y="112" width="276" height="292" rx="65" stroke="url(#frame)" stroke-width="24"/>
+    <rect x="185" y="168" width="187" height="148" rx="25" stroke="#f5f7ff" stroke-width="18"/>
+    <circle cx="326" cy="207" r="17" fill="#ffc96b" stroke="none"/>
+    <path d="m202 285 50-51 34 34 24-25 45 45" stroke="#f5f7ff" stroke-width="19"/>
+  </g>
+</svg>

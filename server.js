@@ -28,7 +28,9 @@ const publicFiles=new Set([
  '/js/app.js','/js/backup.js','/js/importer.js','/js/library-filter.js','/js/share.js','/js/storage.js','/js/utils.js','/js/video-transcoder.js',
  '/vendor/ffmpeg/ffmpeg/index.js','/vendor/ffmpeg/ffmpeg/classes.js','/vendor/ffmpeg/ffmpeg/const.js','/vendor/ffmpeg/ffmpeg/errors.js','/vendor/ffmpeg/ffmpeg/utils.js','/vendor/ffmpeg/ffmpeg/types.js','/vendor/ffmpeg/ffmpeg/worker.js',
  '/vendor/ffmpeg/core/ffmpeg-core.js','/vendor/ffmpeg/core/ffmpeg-core.wasm',
- '/icons/git.svg','/icons/sun.svg','/icons/moon.svg','/icons/android/icon-192.png','/icons/android/icon-512.png','/icons/apple/AppIcon-180.png'
+ '/icons/grabit.svg','/icons/grabit-round.svg','/icons/sun.svg','/icons/moon.svg',
+ '/icons/android/icon-192.png','/icons/android/icon-512.png','/icons/android/icon-192-maskable.png','/icons/android/icon-512-maskable.png',
+ '/icons/android/icon-round-192.png','/icons/android/icon-round-512.png','/icons/apple/AppIcon-180.png'
 ]);
 const vendorFiles=new Map([
  ...['index.js','classes.js','const.js','errors.js','utils.js','types.js','worker.js'].map(file=>[`/vendor/ffmpeg/ffmpeg/${file}`,path.join(root,'node_modules','@ffmpeg','ffmpeg','dist','esm',file)]),

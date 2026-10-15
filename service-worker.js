@@ -1,10 +1,10 @@
-const CACHE_NAME='grabit-shell-v81';
+const CACHE_NAME='grabit-shell-v83';
 const APP_SHELL=[
  './',
  './library.html',
  './manifest.webmanifest',
- './css/styles.css?v=56',
- './js/app.js?v=80',
+ './css/styles.css?v=58',
+ './js/app.js?v=81',
  './js/library-filter.js',
  './js/backup.js',
  './js/importer.js',
@@ -12,11 +12,16 @@ const APP_SHELL=[
  './js/storage.js',
  './js/utils.js',
  './js/video-transcoder.js',
- './icons/git.svg',
+ './icons/grabit.svg',
+ './icons/grabit-round.svg',
  './icons/sun.svg',
  './icons/moon.svg',
  './icons/android/icon-192.png',
  './icons/android/icon-512.png',
+ './icons/android/icon-192-maskable.png',
+ './icons/android/icon-512-maskable.png',
+ './icons/android/icon-round-192.png',
+ './icons/android/icon-round-512.png',
  './icons/apple/AppIcon-180.png'
 ];
 
@@ -44,7 +49,7 @@ self.addEventListener('fetch',event=>{
   }).catch(()=>caches.match('./library.html')));
   return;
  }
- const appShellAsset=/\/(?:library\.html|manifest\.webmanifest|css\/styles\.css|js\/(?:app|importer|share|storage|utils|video-transcoder)\.js|vendor\/ffmpeg\/ffmpeg\/[^/]+\.js|icons\/(?:git|sun|moon)\.svg|icons\/(?:android\/icon-(?:192|512)\.png|apple\/AppIcon-180\.png))$/.test(url.pathname);
+ const appShellAsset=/\/(?:library\.html|manifest\.webmanifest|css\/styles\.css|js\/(?:app|importer|share|storage|utils|video-transcoder)\.js|vendor\/ffmpeg\/ffmpeg\/[^/]+\.js|icons\/(?:grabit(?:-round)?|sun|moon)\.svg|icons\/(?:android\/icon-(?:192|512)(?:-maskable)?\.png|android\/icon-round-(?:192|512)\.png|apple\/AppIcon-180\.png))$/.test(url.pathname);
  if(appShellAsset){
   event.respondWith(fetch(request).then(response=>{
    if(response.ok&&response.type==='basic'){const copy=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put(request,copy))}
