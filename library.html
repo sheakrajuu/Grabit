@@ -13,19 +13,19 @@
 <link rel="icon" type="image/svg+xml" href="./icons/grabit.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="./icons/apple/AppIcon-180.png">
 <meta name="description" content="Save, organize, and view your images, videos, and bookmarks.">
-<link rel="stylesheet" href="./css/styles.css?v=60">
+<link rel="stylesheet" href="./css/styles.css?v=74">
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to main content</a>
 <div class="win" id="win">
- <aside class="side" id="sidebar" aria-label="Library sidebar"><div class="brand"><img src="./icons/grabit.svg" alt=""><span>Grabit</span></div><nav id="nav" aria-label="Library navigation"></nav></aside>
+ <aside class="side" id="sidebar" aria-label="Library sidebar"><div class="brand"><span>Grabit</span><button class="ib" id="themeToggle" title="Switch theme" aria-label="Switch theme"><img src="./icons/sun.svg" alt=""></button></div><nav id="nav" aria-label="Library navigation"></nav></aside>
  <div class="scrim" id="scrim"></div>
  <div class="mw">
   <header class="top">
    <button class="ib" id="sbt" title="Toggle sidebar" aria-label="Toggle sidebar" aria-controls="sidebar" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
    <h1 id="ttl">Inbox</h1>
-   <button class="ib" id="themeToggle" title="Switch theme" aria-label="Switch theme"><img src="./icons/sun.svg" alt=""></button>
    <button class="ib" id="add" title="Add content"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"/></svg><span>Add</span></button>
+   <button class="ib" id="searchToggle" title="Search your library" aria-label="Search your library" aria-controls="q" aria-expanded="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m16 16 4 4"/></svg></button>
    <input class="in" id="q" placeholder="Search your library…" autocomplete="off" aria-label="Search your library">
   </header>
   <main id="main"></main>
@@ -34,6 +34,6 @@
 <div class="md" id="md" role="presentation"><div class="box" id="bx" role="dialog" aria-modal="true" aria-label="Library dialog" tabindex="-1"></div></div>
 <div id="ts" role="status" aria-live="polite"></div>
 <div id="task-status" role="status" aria-live="polite" hidden></div>
-<script type="module" src="./js/app.js?v=83"></script>
+<script type="module" src="./js/app.js?v=84"></script>
 </body>
 </html>
