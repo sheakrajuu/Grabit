@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Git</title>
+  <defs>
+    <linearGradient id="frame" x1="112" y1="120" x2="414" y2="410" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8b7cff"/>
+      <stop offset="1" stop-color="#42c6ed"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(-6 -8) translate(256 256) scale(1.14) translate(-256 -256)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="103" y="132" width="267" height="267" rx="61" stroke="url(#frame)" stroke-width="22" transform="rotate(-8 236.5 265.5)" opacity=".72"/>
+    <rect x="141" y="112" width="276" height="292" rx="65" stroke="url(#frame)" stroke-width="24"/>
+    <rect x="185" y="168" width="187" height="148" rx="25" fill="#0f1118" stroke="#f5f7ff" stroke-width="18"/>
+    <text x="278" y="242" fill="#f5f7ff" font-family="Arial, sans-serif" font-size="92" font-weight="700" letter-spacing="-5" text-anchor="middle" dominant-baseline="central">Git</text>
+  </g>
+</svg>

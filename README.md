@@ -20,7 +20,7 @@ Grabit is a local-first visual library for saving links, images, videos, notes, 
 - `server/public-proxy.js` — public-address-only network proxy for yt-dlp requests and redirects.
 - `requirements.txt` — Python dependency used by server-side video-list discovery.
 - `test/extractor.test.js` — extractor and network-address tests.
-- `icons/git.svg` — app favicon; matching PNGs are used for installable app icons.
+- `icons/grabit.svg` — square master mark for the favicon and app branding; platform launch icons use opaque square PNGs so Android and Apple can apply their own icon masks.
 - `icons/sun.svg` and `icons/moon.svg` — Lucide theme icons (ISC license), bundled for offline use.
 - `render.yaml` — Render Node Web Service configuration.
 
