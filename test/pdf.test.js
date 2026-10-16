@@ -54,7 +54,15 @@ test('creates PDFs with more than 200 image pages',async()=>{
  assert.equal(pdf.getPages().length,201);
 });
 
-test('rejects unsupported image types and empty selections',async()=>{
- await assert.rejects(createImagePdf([{data:'data:image/webp;base64,AAAA'}]),/Only JPEG and PNG/);
+test('converts browser-supported image formats to PDF pages',async()=>{
+ const webp='data:image/webp;base64,UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEAAUAmJaQAA3AA/v89WAAAAA==';
+ const bytes=await createImagePdf([{data:webp}]);
+ const pdf=await PDFDocument.load(bytes);
+ assert.equal(pdf.getPages().length,1);
+});
+
+test('rejects invalid image data and empty selections',async()=>{
+ await assert.rejects(createImagePdf([{data:'data:text/plain;base64,AAAA'}]),/supported image data URL/);
+ await assert.rejects(createImagePdf([{data:'data:image/svg+xml;base64,PHN2Zy8+'}]),/supports JPEG, PNG, WebP, GIF, AVIF, and BMP/);
  await assert.rejects(createImagePdf([]),/at least one image/);
 });
