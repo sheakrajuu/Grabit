@@ -7,8 +7,9 @@ const MAX_BUTTON_CLICKS=12;
 const MAX_SCROLL_STEPS=24;
 const MAX_RENDER_TIME_MS=35_000;
 const MAX_BROWSER_REQUESTS=900;
-const LOAD_ALL_LABEL=/\b(?:show|view|see|load|display)\s+all\b|\ball\s+(?:photos?|images?|pictures?)\b/i;
-const LOAD_MORE_LABEL=/\b(?:show|view|see|load|display)\s+(?:all|more|all\s+(?:photos?|images?|pictures?))\b|\b(?:load|show)\s+more\b|\b(?:all|more)\s+(?:photos?|images?|pictures?)\b(?!\s+(?:shown|loaded|displayed|visible|complete))/i;
+const LOAD_ALL_LABEL=/\b(?:show|view|see|load|display)\s+all(?:\s+\d+)?\b|\ball(?:\s+\d+)?\s+(?:photos?|images?|pictures?)\b/i;
+const LOAD_MORE_LABEL=/\b(?:show|view|see|load|display|expand)\s+(?:all|more)(?:\s+\d+)?\b|\b(?:load|show|view)\s+more\b|\b(?:all|more)(?:\s+\d+)?\s+(?:photos?|images?|pictures?)\b/i;
+const COMPLETED_CONTROL_LABEL=/\b(?:shown|loaded|displayed|visible|complete|completed)\b/i;
 const browserSlots=[];
 let activeBrowsers=0;
 const MAX_ACTIVE_BROWSERS=2;
@@ -56,13 +57,16 @@ export function parseRenderedImages(images,pageUrl,title){
 async function expandVisibleGalleries(page,deadline){
  let clicked=0;
  while(clicked<MAX_BUTTON_CLICKS&&Date.now()<deadline){
-  const matches=await page.locator('button,[role="button"],a').evaluateAll((elements,pattern)=>elements
+  const matches=await page.locator('button,[role="button"],a').evaluateAll((elements,{pattern,completedPattern})=>elements
    .map((element,index)=>({
     index,
     label:(element.getAttribute('aria-label')||element.getAttribute('title')||element.innerText||element.textContent||'').replace(/\s+/g,' ').trim(),
-    visible:element.getClientRects().length>0&&getComputedStyle(element).visibility!=='hidden'
+    visible:element.getClientRects().length>0&&getComputedStyle(element).visibility!=='hidden'&&!element.disabled&&element.getAttribute('aria-disabled')!=='true'
    }))
-   .filter(({label,visible})=>visible&&label&&new RegExp(pattern,'i').test(label)),LOAD_MORE_LABEL.source);
+   .filter(({label,visible})=>visible&&label&&new RegExp(pattern,'i').test(label)&&!new RegExp(completedPattern,'i').test(label)),{
+    pattern:LOAD_MORE_LABEL.source,
+    completedPattern:COMPLETED_CONTROL_LABEL.source
+   });
   const match=matches.find(({label})=>LOAD_ALL_LABEL.test(label))||matches[0];
   if(!match)break;
   try{

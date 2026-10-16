@@ -10,17 +10,17 @@ async function listen(server){
  return server.address().port;
 }
 
-test('renders a public gallery, activates its show-all button, and returns the added images',async t=>{
+test('uses generic accessible gallery controls to reveal images without following ad redirects',async t=>{
  const gallery=http.createServer((request,response)=>{
   response.writeHead(200,{'content-type':'text/html; charset=utf-8'});
-  response.end(`<!doctype html><title>Gallery</title><button id="more">Show More</button><button id="show">Show All</button><main><img src="/one.jpg" alt="One"></main><script>
+  response.end(`<!doctype html><title>Gallery</title><button id="more">Load more photos</button><div id="show" role="button" tabindex="0" aria-label="View all 3 pictures" style="width:120px;height:32px"></div><main><img src="/one.jpg" alt="One"></main><script>
    document.querySelector('#more').addEventListener('click',()=>{
     document.querySelector('main').insertAdjacentHTML('beforeend','<img src="/more.jpg" alt="More">');
     document.querySelector('#more').textContent='More loaded';
    });
    document.querySelector('#show').addEventListener('click',()=>{
     document.querySelector('main').insertAdjacentHTML('beforeend','<img src="/two.jpg" alt="Two"><img src="/three.jpg" alt="Three">');
-    document.querySelector('#show').textContent='All images shown';
+    document.querySelector('#show').setAttribute('aria-label','All images shown');
     document.querySelector('#more').hidden=true;
     setTimeout(()=>location.href='https://marketplacia.example/ad',0);
    });
