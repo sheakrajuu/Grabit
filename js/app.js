@@ -173,7 +173,7 @@ function matchingItems(){
 }
 function thumbUrl(item){if(item.type==='note')return '';return pixivImageProxyUrl(item.thumbnailUrl||item.media?.find(m=>m.type==='image')?.sourceUrl||item.media?.find(m=>m.thumbnailUrl)?.thumbnailUrl||fallbackThumbnail(item.type))}
 function card(item){
- const thumb=thumbUrl(item);const hasMorePlaylistVideos=item.type==='playlist'&&item.sourcePages?.some(page=>page.playlistPaging&&page.playlistHasMore);const labels={bookmark:'WEB',note:'NOTE',image:'IMAGE',video:'VIDEO',gallery:`GALLERY · ${item.media.length}`,playlist:`PLAYLIST · ${item.media.length}${hasMorePlaylistVideos?'+':''}`};
+ const thumb=thumbUrl(item);const hasMorePlaylistVideos=item.type==='playlist'&&item.sourcePages?.some(page=>page.playlistPaging&&page.playlistHasMore);const labels={bookmark:'WEB',note:'NOTE',image:'IMAGE',video:'VIDEO',file:'FILE',gallery:`GALLERY · ${item.media.length}`,playlist:`PLAYLIST · ${item.media.length}${hasMorePlaylistVideos?'+':''}`};
  const image=item.type==='note'?'':`<img class="art" src="${esc(thumb)}" alt="" loading="lazy" decoding="async">`;
  return `<article class="card${item.type==='note'?' note-card':''}${V.selectMode?' selecting':''}" data-id="${esc(item.id)}" tabindex="0" aria-label="${esc(item.title)}">
  ${image}<span class="bd">${labels[item.type]||'ITEM'}</span><div class="cap">${esc(item.title||'Untitled')}</div>${item.sourceDomain?`<div class="source">${esc(item.sourceDomain)}</div>`:''}
@@ -204,8 +204,8 @@ function render(){
  const pageCount=Math.ceil(items.length/LIBRARY_PAGE_SIZE);
  V.libraryPage=Math.min(V.libraryPage,Math.max(0,pageCount-1));
  const visibleItems=items.slice(V.libraryPage*LIBRARY_PAGE_SIZE,(V.libraryPage+1)*LIBRARY_PAGE_SIZE);
- const types=['all','bookmark','image','video','gallery','playlist','note'];
- const typeLabels={all:'All types',bookmark:'Websites',image:'Images',video:'Videos',gallery:'Galleries',playlist:'Playlists',note:'Notes'};
+ const types=['all','bookmark','image','video','file','gallery','playlist','note'];
+ const typeLabels={all:'All types',bookmark:'Websites',image:'Images',video:'Videos',file:'Files',gallery:'Galleries',playlist:'Playlists',note:'Notes'};
  const filterActive=Boolean(V.q.trim()||V.type!=='all'||V.filterSectionId);
  const actions=V.selectMode?`<span class="selection-count" role="status" aria-live="polite">${V.selected.size} selected</span>${items.length?'<button class="b" data-bulk="selectAll">Select all</button>':''}${V.selected.size>1?'<button class="b" data-bulk="share">Share contents</button>':''}${V.selected.size&&V.view!=='inbox'?'<button class="b" data-bulk="inbox">Move to Inbox</button>':''}${V.selected.size?'<button class="b d" data-bulk="delete">Delete</button>':''}<button class="b" data-bulk="done">Done</button>`:items.length?'<button class="b" id="selectMode">Select</button>':'';
  const typeOptions=types.map(type=>({value:type,label:typeLabels[type]}));
@@ -364,7 +364,7 @@ function noteDialog(){
 }
 function uploadDialog(droppedFiles=[]){
  V.droppedFiles=droppedFiles;
- show(`<b>Add media</b><p class="hint">Images are compressed; multiple selected photos are saved together as one gallery. Videos up to 100 MB each are saved on this device. Unsupported video codecs can be converted locally; the original stays private. Conversion uses extra device resources and may not work for every file.</p>${V.droppedFiles?.length?`<p>${V.droppedFiles.length} ${V.droppedFiles.length===1?'file is':'files are'} ready to add.</p>`:''}<label for="imageFiles">Choose images or videos</label><input class="in" id="imageFiles" type="file" accept="image/*,video/*,.mkv,.avi,.wmv,.flv,.mpeg,.mpg,.mts,.m2ts,.ts,.vob,.asf,.3gp,.3g2" multiple><label for="photoGalleryTitle">Photo gallery title (optional)</label><input class="in" id="photoGalleryTitle" maxlength="240" placeholder="Photo gallery"><label>Save to</label>${destinationOptions()}<div class="row"><button class="b p" data-action="saveImages">Add media</button><button class="b" data-action="close">Cancel</button></div>`);
+ show(`<b>Add media</b><p class="hint">Images and videos are saved in this browser. Other files are uploaded to the server; ZIP, CBZ, and EPUB archives with images become browsable galleries. Server uploads are public to anyone with the service URL.</p>${V.droppedFiles?.length?`<p>${V.droppedFiles.length} ${V.droppedFiles.length===1?'file is':'files are'} ready to add.</p>`:''}<label for="imageFiles">Choose files</label><input class="in" id="imageFiles" type="file" accept="*/*" multiple><label for="photoGalleryTitle">Gallery title (optional)</label><input class="in" id="photoGalleryTitle" maxlength="240" placeholder="Photo gallery"><label>Save to</label>${destinationOptions()}<div class="row"><button class="b p" data-action="saveImages">Add media</button><button class="b" data-action="close">Cancel</button></div>`);
 }
 function createSection(){show(`<b>New section</b><label for="newSectionName">Name</label><input class="in" id="newSectionName" maxlength="100" placeholder="e.g. Design ideas"><div class="row"><button class="b p" data-action="createSection">Create section</button><button class="b" data-action="close">Cancel</button></div>`)}
 async function saveNewSection(){
@@ -378,7 +378,7 @@ async function manageSection(id){
 }
 function detail(id){
  const item=V.items.find(x=>x.id===id);if(!item)return;
- if(item.type==='note'){V.dialogItemId=id;V.mediaIndex=-1;renderItemViewer(item);return}
+ if(item.type==='note'||item.type==='file'){V.dialogItemId=id;V.mediaIndex=-1;renderItemViewer(item);return}
  startWatch(id);
 }
 function galleryPdfDialog(id){
@@ -853,6 +853,9 @@ function renderItemViewer(item){
   if((item.hiddenMediaUrls||[]).includes(media[0].sourceUrl))display=`<div class="hidden-media-view"><span class="hidden-media-placeholder">Hidden image</span></div><div class="row"><button class="b" data-media-visibility="${esc(media[0].sourceUrl)}">Unhide image</button></div>`;
   else if(media[0].type==='image'&&!media[0].embedUrl){imageViewMode=true;display=libraryImageViewer(item,media[0],0,1,'close')}
   else display=`<div class="focus-media"><img src="${esc(mediaSource(media[0]))}" alt="${esc(item.title)}"></div><div class="row">${downloadButton(item,media[0])}<button class="b" data-media-visibility="${esc(media[0].sourceUrl)}">${(item.hiddenMediaUrls||[]).includes(media[0].sourceUrl)?'Unhide':'Hide'} this image</button></div>`;
+ }else if(item.type==='file'&&media[0]){
+  const fileName=media[0].fileName||item.title;
+  display=`<div class="server-file-view"><p>${esc(fileName)}</p><a class="b p" href="${esc(media[0].sourceUrl)}" download="${esc(fileName)}">${icon(icons.download)} Download file</a></div>`;
  }else if(item.type==='bookmark'){
   const thumbnail=thumbUrl(item);
   display=thumbnail?`<div class="bookmark-preview"><img src="${esc(thumbnail)}" alt=""></div>`:'<div class="bookmark-preview bookmark-fallback" aria-hidden="true">WEB</div>';
@@ -981,19 +984,38 @@ async function saveNote(){
  const title=$('#noteTitle').value.trim(),notes=$('#noteText').value.trim();if(!title&&!notes){toast('Add a title or note text first.');return}
  try{await storeItem(emptyItem({type:'note',title:title||'Untitled note',notes,sectionIds:selectedSections($('#bx'))}));await refreshLibrary();hide();render();toast('Note saved.')}catch(e){reportError('Could not save note',e)}
 }
+async function saveServerFile(file,sectionIds){
+ const response=await fetch(`/api/gallery/files?name=${encodeURIComponent(file.name)}`,{method:'POST',headers:{'content-type':'application/octet-stream','x-file-content-type':file.type||'application/octet-stream'},body:file});
+ let result={};try{result=await response.json()}catch{}
+ if(!response.ok)throw new Error(result.error||'Could not upload this file.');
+ if(Array.isArray(result.pages)&&result.pages.length){
+  const pages=[...result.pages].sort((left,right)=>left.entryName.localeCompare(right.entryName,undefined,{numeric:true,sensitivity:'base'}));
+  const media=pages.map((page,position)=>({type:'image',sourceUrl:new URL(page.url,location.href).href,alt:page.entryName,position}));
+  const title=$('#photoGalleryTitle')?.value.trim()||file.name.replace(/\.[^.]+$/,'')||file.name;
+  await storeItem(emptyItem({type:'gallery',title,description:`Pages extracted from ${file.name}`,sourceUrl:new URL(result.url,location.href).href,media,thumbnailUrl:media[0].sourceUrl,sectionIds}));
+  return{gallery:true,warning:result.archiveWarning||''};
+ }
+ const sourceUrl=new URL(result.url,location.href).href,extension=file.name.split('.').pop().toLowerCase(),imageExtensions=new Set(['avif','bmp','gif','jpeg','jpg','png','webp']);
+ if(file.type.startsWith('image/')&&imageExtensions.has(extension)){
+  await storeItem(emptyItem({type:'image',title:file.name.replace(/\.[^.]+$/,'')||file.name,media:[{type:'image',sourceUrl,alt:file.name,position:0}],thumbnailUrl:sourceUrl,sectionIds}));
+ }else{
+  await storeItem(emptyItem({type:'file',title:file.name,media:[{type:'file',sourceUrl,fileName:file.name,mimeType:file.type,size:file.size,position:0}],sectionIds}));
+ }
+ return{gallery:false,warning:result.archiveWarning||''};
+}
 async function saveImages(){
- const files=[...($('#imageFiles')?.files||[]),...(V.droppedFiles||[])]; if(!files.length){toast('Choose at least one image or video.');return}
- const sections=selectedSections($('#bx')),galleryMedia=[];let count=0;const errors=[],task=startTask('Adding media',files.length,'media');
+ const files=[...($('#imageFiles')?.files||[]),...(V.droppedFiles||[])]; if(!files.length){toast('Choose at least one file.');return}
+ const sections=selectedSections($('#bx')),galleryMedia=[];let count=0;const errors=[],warnings=[],task=startTask('Adding media',files.length,'media');
  for(const file of files){
   try{
    taskCancelled(task);
-   if(file.type.startsWith('image/')){
+  if(file.type.startsWith('image/')&&file.size<=12*1024*1024){
     const image=await imageFile(file);taskCancelled(task);
     galleryMedia.push({type:'image',sourceUrl:'',storedDataUrl:image.data,width:image.width,height:image.height,position:galleryMedia.length,alt:file.name.replace(/\.[^.]+$/,'')});
-   }else if(isVideoFile(file)){
+  }else if(isVideoFile(file)&&file.size<=100*1024*1024){
     const video=await videoFile(file);taskCancelled(task);
     await storeItem(emptyItem({type:'video',title:file.name.replace(/\.[^.]+$/,''),media:[{type:'video',sourceUrl:'',storedBlob:video.blob,mimeType:video.mimeType,size:video.size,position:0}],thumbnailUrl:fallbackThumbnail('video'),sectionIds:sections}));
-   }else throw new Error('Choose an image or video file.');
+  }else{const result=await saveServerFile(file,sections);if(result.warning)warnings.push(`${file.name}: ${result.warning}`)}
    count++;
   }
   catch(error){if(error.name==='AbortError')break;errors.push(`${file.name}: ${error.message}`)}
@@ -1007,7 +1029,7 @@ async function saveImages(){
    await storeItem(emptyItem({type,title,media:galleryMedia,thumbnailUrl:galleryMedia[0].storedDataUrl,sectionIds:sections}));
   }catch(error){count-=galleryMedia.length;errors.push(`Photo gallery: ${error.message}`)}
  }
- V.droppedFiles=[];await refreshLibrary();finishTask(task);hide();render();toast(`${countLabel(count,'file')} saved${task.controller.signal.aborted?' before stopping':''}${errors.length?`; ${countLabel(errors.length,'file')} could not be saved. Try a smaller file or check available storage.`:''}.`);if(errors.length)console.error('Media upload errors:',errors);
+ V.droppedFiles=[];await refreshLibrary();finishTask(task);hide();render();toast(`${countLabel(count,'file')} saved${task.controller.signal.aborted?' before stopping':''}${errors.length?`; ${countLabel(errors.length,'file')} could not be saved`:''}${warnings.length?`; ${countLabel(warnings.length,'archive')} saved without extracted pages`:''}.`);if(errors.length)console.error('Media upload errors:',errors);if(warnings.length)console.warn('Archive upload warnings:',warnings);
 }
 async function convertSavedVideo(itemId,mediaId){
  const item=V.items.find(entry=>entry.id===itemId),media=item?.media.find(entry=>entry.id===mediaId);
@@ -1179,7 +1201,7 @@ async function commitRestore(){
   await refreshLibrary();
   for(const item of data.items){
    taskCancelled(task);
-   if(!item||typeof item.id!=='string'||typeof item.title!=='string'||!['bookmark','note','image','video','gallery','playlist'].includes(item.type)||!Array.isArray(item.media)||!Array.isArray(item.sectionIds))continue;
+  if(!item||typeof item.id!=='string'||typeof item.title!=='string'||!['bookmark','note','image','video','file','gallery','playlist'].includes(item.type)||!Array.isArray(item.media)||!Array.isArray(item.sectionIds))continue;
    if(item.sourceUrl&&!validUrl(item.sourceUrl)){updateTask('Importing backup',++task.completed,task.total,task);continue}
    if(item.media.some(m=>m.sourceUrl&&!validUrl(m.sourceUrl)&&!m.storedDataUrl)){updateTask('Importing backup',++task.completed,task.total,task);continue}
    if(item.canonicalUrl&&V.items.some(x=>x.canonicalUrl===item.canonicalUrl)){duplicates++;updateTask('Importing backup',++task.completed,task.total,task);continue}

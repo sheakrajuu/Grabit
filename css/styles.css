@@ -121,6 +121,10 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .download-discovery-copy span{color:var(--mu);font-size:11px}
 .download-discovery-card>.b{width:100%}
 .download-history-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}
+.server-file-view{display:grid;justify-items:center;gap:10px;min-height:180px;padding:32px 16px;background:var(--card);text-align:center}
+.server-file-view p{overflow-wrap:anywhere;color:var(--mu)}
+.server-file-view .b{display:flex;align-items:center;gap:8px}
+.server-file-view svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .download-record{display:flex;align-items:center;gap:12px;padding:9px;border:1px solid var(--line);border-radius:10px;background:var(--card)}
 .download-record img{width:64px;height:64px;object-fit:cover;border-radius:7px;background:var(--win)}
 .download-record-copy{display:flex;flex:1;min-width:0;flex-direction:column;gap:3px}

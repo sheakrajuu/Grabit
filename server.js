@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {createReadStream} from 'node:fs';
 import path from 'node:path';
 import {Transform} from 'node:stream';
 import {fileURLToPath} from 'node:url';
@@ -6,6 +7,8 @@ import {extractPage,openPublicMedia,safeDownloadFilename} from './server/extract
 import {createImagePdf,MAX_PDF_IMAGES} from './server/pdf.js';
 import {extractVideoCollection,isVideoCollectionUrl,maxPlaylistItems,playlistPageSize,resolveVideo,startVideoDownload} from './server/playlist.js';
 import {createShareStore,MAX_SHARE_BYTES} from './server/share-store.js';
+import {createGalleryStore} from './server/gallery-store.js';
+import {extractArchiveGallery,isImageArchive} from './server/archive-gallery.js';
 import {classify,videoCollectionTitle,isPixivImageUrl} from './js/utils.js';
 
 const root=path.dirname(fileURLToPath(import.meta.url));
@@ -22,6 +25,7 @@ const MAX_PIXIV_IMAGES_PER_WINDOW=120;
 const MAX_SHARES_PER_WINDOW=10;
 const buckets=new Map();
 const shareStore=createShareStore();
+const galleryStore=createGalleryStore();
 const publicFiles=new Set([
  '/library.html','/manifest.webmanifest','/service-worker.js','/THIRD-PARTY-NOTICES.txt','/licenses/COPYING.GPLv2',
  '/css/styles.css',
@@ -93,11 +97,11 @@ async function readJson(request,maxBytes=MAX_BODY_BYTES,limitMessage='Request bo
  try{return JSON.parse(Buffer.concat(chunks).toString('utf8'))}catch{throw Object.assign(new Error('Request body must contain valid JSON.'),{status:400})}
 }
 
-async function readBinary(request,maxBytes){
+async function readBinary(request,maxBytes,limitMessage='Encrypted share exceeds the 80 MB limit.'){
  const chunks=[];let length=0;
  for await(const chunk of request){
   length+=chunk.length;
-  if(length>maxBytes)throw Object.assign(new Error('Encrypted share exceeds the 80 MB limit.'),{status:413});
+    if(length>maxBytes)throw Object.assign(new Error(limitMessage),{status:413});
   chunks.push(chunk);
  }
  return Buffer.concat(chunks,length);
@@ -142,6 +146,41 @@ async function serveStatic(pathname,response){
 const server=http.createServer(async(request,response)=>{
  const url=new URL(request.url,'http://localhost');
  if(url.pathname==='/api/health'&&request.method==='GET'){send(response,200,{ok:true});return}
+ if(url.pathname==='/api/gallery/files'){
+  if(request.method==='GET'){try{send(response,200,{files:await galleryStore.list()})}catch(error){console.error('Could not list server gallery files:',error);send(response,500,{error:'Could not load the server gallery.'})}return}
+  if(request.method!=='POST'){send(response,405,{error:'Use GET to list gallery files or POST to upload a file.'});return}
+  try{
+   if(request.headers['content-type']!=='application/octet-stream'){send(response,415,{error:'Upload files as application/octet-stream.'});return}
+   const name=url.searchParams.get('name')||'';
+    const imageUpload=/\.(?:avif|bmp|gif|jpe?g|png|webp)$/i.test(name);
+    const file=await galleryStore.create(name,request.headers['x-file-content-type'],request,imageUpload?{galleryPage:true}:{});
+    if(isImageArchive(name)){
+     try{
+      const pages=await extractArchiveGallery(galleryStore.dataPath(file.id),file.id,file.name,galleryStore);
+      if(pages.length){const source=await galleryStore.setGallerySource(file.id,pages.length);send(response,201,{...source,pages});return}
+     }catch(error){console.warn('Could not unpack uploaded image archive:',error);send(response,201,{...file,archiveWarning:'The archive was stored, but its image pages could not be unpacked.'});return}
+    }
+    send(response,201,file);
+  }catch(error){send(response,error.status||500,{error:error.message||'Could not upload this file.'})}
+  return;
+ }
+ const galleryFileMatch=url.pathname.match(/^\/api\/gallery\/files\/([A-Za-z0-9_-]{16})$/);
+ if(galleryFileMatch){
+  if(request.method!=='GET'&&request.method!=='HEAD'){send(response,405,{error:'Use GET to download a gallery file.'});return}
+  try{
+   const file=await galleryStore.read(galleryFileMatch[1]);
+   if(!file){send(response,404,{error:'This gallery file is no longer available.'});return}
+   const fallback=file.name.replace(/[^\x20-\x7e]/g,'_').replace(/["\\]/g,'_');
+  const imageTypes={'.avif':'image/avif','.bmp':'image/bmp','.gif':'image/gif','.jpeg':'image/jpeg','.jpg':'image/jpeg','.png':'image/png','.webp':'image/webp'},inline=Boolean(file.galleryPage),extension=path.extname(file.name).toLowerCase();
+  response.writeHead(200,{'content-type':inline?imageTypes[extension]||'application/octet-stream':'application/octet-stream','content-disposition':`${inline?'inline':'attachment'}; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(file.name)}`,'content-length':file.size,'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'});
+  if(request.method==='HEAD'){response.end();return}
+  const stream=createReadStream(file.dataPath);
+  response.on('close',()=>{if(!response.writableFinished)stream.destroy()});
+  stream.on('error',error=>{console.error('Server gallery file stream failed:',error);response.destroy(error)});
+  stream.pipe(response);
+  }catch(error){console.error('Could not read server gallery file:',error);if(response.headersSent)response.destroy(error);else send(response,500,{error:'Could not download this gallery file.'})}
+  return;
+ }
  if(url.pathname==='/api/shares'){
   if(request.method!=='POST'){send(response,405,{error:'Use POST to create a share link.'});return}
   if(!allowShareCreation(request)){send(response,429,{error:'Too many share links. Wait a minute and retry.'});return}

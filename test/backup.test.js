@@ -52,3 +52,10 @@ test('preserves browser-converted video data while validating its media type',()
  assert.deepEqual(result.data.items,[backup.items[0]]);
  assert.equal(result.skippedItems,1);
 });
+
+test('keeps server-hosted file items in library backups',()=>{
+ const fileItem={id:'server-file',type:'file',title:'manual.pdf',sectionIds:[],media:[{type:'file',sourceUrl:'https://example.com/api/gallery/files/0123456789abcdef',fileName:'manual.pdf'}]};
+ const result=inspectLibraryBackup({format:'grabit-library',version:1,sections:[],items:[fileItem]});
+ assert.deepEqual(result.data.items,[fileItem]);
+ assert.equal(result.skippedItems,0);
+});

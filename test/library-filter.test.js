@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {matchesContentType} from '../js/library-filter.js';
 
 test('matches standalone library items to their selected type',()=>{
- for(const type of ['bookmark','image','video','gallery','playlist','note']){
+ for(const type of ['bookmark','image','video','file','gallery','playlist','note']){
   assert.equal(matchesContentType({type,media:[]},type),true);
   assert.equal(matchesContentType({type,media:[]},'all'),true);
  }

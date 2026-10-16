@@ -8,10 +8,14 @@
   "dependencies": {
     "@ffmpeg/core": "0.12.10",
     "@ffmpeg/ffmpeg": "0.12.15",
-    "pdf-lib": "^1.17.1"
+    "pdf-lib": "^1.17.1",
+    "yauzl": "^3.4.0"
   },
   "scripts": {
     "start": "node server.js",
     "test": "node --test"
+  },
+  "devDependencies": {
+    "yazl": "^3.3.1"
   }
 }

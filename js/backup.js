@@ -1,6 +1,6 @@
 import {validUrl} from './utils.js';
 
-const ITEM_TYPES=new Set(['bookmark','note','image','video','gallery','playlist']);
+const ITEM_TYPES=new Set(['bookmark','note','image','video','file','gallery','playlist']);
 
 export function inspectLibraryBackup(data){
  if(data?.format!=='grabit-library'||data.version!==1||!Array.isArray(data.items)||!Array.isArray(data.sections)){
@@ -30,7 +30,7 @@ export function inspectLibraryBackup(data){
 }
 
 function validMedia(media){
- if(!media||typeof media!=='object'||Array.isArray(media)||!['image','video'].includes(media.type))return false;
+ if(!media||typeof media!=='object'||Array.isArray(media)||!['image','video','file'].includes(media.type))return false;
  if(media.sourceUrl!==undefined&&(typeof media.sourceUrl!=='string'||Boolean(media.sourceUrl&&!validUrl(media.sourceUrl))))return false;
  if(media.storedDataUrl!==undefined&&media.storedDataUrl!==null){
   if(typeof media.storedDataUrl!=='string')return false;
