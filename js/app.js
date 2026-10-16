@@ -446,6 +446,9 @@ function isDirectImageLinkGallery(item){
  return item.type==='gallery'&&pages.length>1&&pages.every(page=>page.media?.length===1&&page.media[0].type==='image'&&normalized(page.url)===normalized(page.media[0].sourceUrl||page.media[0].url));
 }
 function sourcePages(item){
+ if(item.type==='gallery'&&item.description?.startsWith('Pages extracted from ')&&item.media?.length){
+  return[{url:'',title:item.title||'Image gallery',description:item.description,index:0,extracted:true,media:orderedMedia(item)}];
+ }
  if(item.type==='gallery'&&(item.galleryLinksGrouped||isDirectImageLinkGallery(item))){
   return[{url:item.sourceUrl||item.sourceUrls?.[0]||'',title:item.title||host(item.sourceUrl),description:item.description||'',media:orderedMedia(item),index:0,extracted:true}];
  }
@@ -815,8 +818,8 @@ function renderWatchPage(pushScroll=false,message=''){
  }
  main.scrollTop=savedScroll;watch.scrollTop=savedScroll;
  if(message&&message.startsWith('Could not fetch')&&watch.retrying)return;
- const sourceNeedsRefresh=!!item.sourcePages?.some(page=>page.refetchOnOpen);
- if((sourceNeedsRefresh||!(item.type==='image'||item.type==='video'&&item.media?.length))&&!message&&!watch.extractionAttempted&&(!item.sourcePages?.length||item.sourcePages.some(page=>!page.extracted||page.refetchOnOpen))&&!watch.loading)loadWatchPage(item);
+ const sourceNeedsRefresh=pages.some(page=>page.refetchOnOpen);
+ if((sourceNeedsRefresh||!(item.type==='image'||item.type==='video'&&item.media?.length))&&!message&&!watch.extractionAttempted&&(!pages.length||pages.some(page=>!page.extracted||page.refetchOnOpen))&&!watch.loading)loadWatchPage(item);
 }
 function mediaTile(item,media,index){
  const source=mediaSource(media),hidden=(item.hiddenMediaUrls||[]).includes(media.sourceUrl);const visual=hidden
@@ -992,7 +995,9 @@ async function saveServerFile(file,sectionIds){
   const pages=[...result.pages].sort((left,right)=>left.entryName.localeCompare(right.entryName,undefined,{numeric:true,sensitivity:'base'}));
   const media=pages.map((page,position)=>({type:'image',sourceUrl:new URL(page.url,location.href).href,alt:page.entryName,position}));
   const title=$('#photoGalleryTitle')?.value.trim()||file.name.replace(/\.[^.]+$/,'')||file.name;
-  await storeItem(emptyItem({type:'gallery',title,description:`Pages extracted from ${file.name}`,sourceUrl:new URL(result.url,location.href).href,media,thumbnailUrl:media[0].sourceUrl,sectionIds}));
+  const gallery=emptyItem({type:'gallery',title,description:`Pages extracted from ${file.name}`,sourceUrl:new URL(result.url,location.href).href,media,thumbnailUrl:media[0].sourceUrl,sectionIds});
+  gallery.sourcePages=[{url:'',title,description:gallery.description,index:0,extracted:true,media:media.map((entry,index)=>({...entry,pageIndex:0,position:index}))}];
+  await storeItem(gallery);
   return{gallery:true,warning:result.archiveWarning||''};
  }
  const sourceUrl=new URL(result.url,location.href).href,extension=file.name.split('.').pop().toLowerCase(),imageExtensions=new Set(['avif','bmp','gif','jpeg','jpg','png','webp']);

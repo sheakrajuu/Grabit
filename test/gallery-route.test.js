@@ -63,5 +63,5 @@ test('CBZ uploads create galleries with more than 300 image pages',async t=>{
  zip.end();
  const archive=await archiveReady,response=await fetch(`${baseUrl}/api/gallery/files?name=large.cbz`,{method:'POST',headers:{'content-type':'application/octet-stream'},body:archive});
  assert.equal(response.status,201);
- const gallery=await response.json();assert.equal(gallery.galleryPageCount,301);assert.equal(gallery.pages.length,301);
+ const gallery=await response.json();assert.equal(gallery.galleryPageCount,301,JSON.stringify(gallery));assert.equal(gallery.pages.length,301);
 });
