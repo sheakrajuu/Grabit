@@ -7,6 +7,7 @@ import {brotliCompressSync,deflateSync,gzipSync} from 'node:zlib';
 import {parsePage,parsePixivPages,parsePixivUgoira,bestSrcsetCandidate,srcsetCandidates,resolvePublicAddress,createPinnedLookup,decompress,safeDownloadFilename,downloadPublicMedia,openPublicMedia,mediaRequestHeaders,extractorLimits} from '../server/extractor.js';
 import {isVideoCollectionUrl,parseResolvedVideo,parseYtDlpOutput,parseYtDlpPlaylist,ytDlpTargetUrl} from '../server/playlist.js';
 import {createPublicProxy} from '../server/public-proxy.js';
+import {parseRenderedImages} from '../server/rendered-extractor.js';
 import {videoEmbedUrl,socialMediaEmbed,videoCollectionTitle,isPixivImageUrl,pixivImageProxyUrl} from '../js/utils.js';
 
 test('recognizes XHamster and XHOfficial creator-list URL normalization targets',()=>{
@@ -138,6 +139,48 @@ test('extracts more than thirty page images',()=>{
  assert.equal(page.media.length,40);
  assert.equal(page.mediaCount,40);
  assert.equal(page.truncated,false);
+});
+
+test('parses images collected from a rendered gallery, including lazy and responsive sources',()=>{
+ const page=parseRenderedImages([
+  {
+   src:'https://cdn.example/preview.jpg',
+   currentSrc:'https://cdn.example/preview.jpg',
+   srcset:'https://cdn.example/medium.jpg 800w, https://cdn.example/full.jpg 1600w',
+   dataSrcset:'',
+   dataOriginal:'',
+   dataLazySrc:'',
+   dataSrc:'',
+   dataUrl:'',
+   alt:'Artist "portrait"',
+   title:'',
+   width:'',
+   height:'',
+   pictureSrcsets:[]
+  },
+  {
+   src:'',
+   currentSrc:'',
+   srcset:'',
+   dataSrcset:'',
+   dataOriginal:'',
+   dataLazySrc:'https://cdn.example/lazy.jpg',
+   dataSrc:'',
+   dataUrl:'',
+   alt:'Lazy image',
+   title:'',
+   width:'',
+   height:'',
+   pictureSrcsets:[]
+  }
+ ],'https://example.test/gallery','Rendered gallery');
+ assert.equal(page.title,'Rendered gallery');
+ assert.deepEqual(page.media.map(media=>media.url),[
+  'https://cdn.example/full.jpg',
+  'https://cdn.example/lazy.jpg'
+ ]);
+ assert.equal(page.media[0].alt,'Artist "portrait"');
+ assert.equal(page.media[0].qualityOptions.length,2);
 });
 
 test('extracts only Pixiv artwork images and ignores unrelated page assets',()=>{

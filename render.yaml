@@ -2,7 +2,7 @@ services:
   - type: web
     name: grabit
     runtime: node
-    buildCommand: npm install && python3 -m venv .venv && .venv/bin/python -m pip install --disable-pip-version-check -r requirements.txt
+    buildCommand: npm install && npx playwright install --with-deps chromium && python3 -m venv .venv && .venv/bin/python -m pip install --disable-pip-version-check -r requirements.txt
     startCommand: npm start
     healthCheckPath: /api/health
     envVars:

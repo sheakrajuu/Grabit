@@ -4,6 +4,7 @@ import path from 'node:path';
 import {Transform} from 'node:stream';
 import {fileURLToPath} from 'node:url';
 import {extractPage,openPublicMedia,safeDownloadFilename} from './server/extractor.js';
+import {extractRenderedPage} from './server/rendered-extractor.js';
 import {createImagePdf} from './server/pdf.js';
 import {extractVideoCollection,isVideoCollectionUrl,maxPlaylistItems,playlistPageSize,resolveVideo,startVideoDownload} from './server/playlist.js';
 import {createShareStore,MAX_SHARE_BYTES} from './server/share-store.js';
@@ -119,6 +120,42 @@ function allowShareCreation(request){
  return bucket.count<=MAX_SHARES_PER_WINDOW;
 }
 
+async function extractPageWithRenderedMedia(rawUrl,renderPage=true){
+ let page;
+ try{page=await extractPage(rawUrl)}
+ catch(error){
+  if(!renderPage)throw error;
+  try{
+   const rendered=await extractRenderedPage(rawUrl);
+   return{...rendered,sourceUrl:rawUrl,finalUrl:rendered.finalUrl,sourceDomain:new URL(rendered.finalUrl).hostname.replace(/^www\./,''),truncated:rendered.truncated||rendered.media.length>=500};
+  }catch(renderError){
+   console.warn('Could not extract the rendered webpage:',renderError);
+   throw error;
+  }
+ }
+ if(!renderPage||classify(rawUrl)!=='bookmark')return page;
+ try{
+  const rendered=await extractRenderedPage(rawUrl);
+  const seen=new Set(),media=[];
+  for(const entry of [...page.media,...rendered.media]){
+   if(seen.has(entry.url))continue;
+   seen.add(entry.url);
+   if(media.length<500)media.push(entry);
+  }
+  return{
+   ...page,
+   title:page.title||rendered.title,
+   finalUrl:rendered.finalUrl,
+   media,
+   mediaCount:media.length,
+   truncated:page.truncated||rendered.truncated||seen.size>media.length
+  };
+ }catch(error){
+  console.warn('Could not extract dynamically loaded page images:',error);
+  return{...page,mediaWarning:'Some images may load only after interacting with this page and could not be discovered.'};
+ }
+}
+
 async function serveStatic(pathname,response){
  let decoded;try{decoded=decodeURIComponent(pathname)}catch{response.writeHead(400).end('Bad request');return}
  const relative=decoded==='/'?'/library.html':decoded;
@@ -228,14 +265,14 @@ const server=http.createServer(async(request,response)=>{
    let page,collection,collectionError,pageError;
    if(shouldDiscoverCollection){
     const [pageResult,collectionResult]=await Promise.allSettled([
-     extractPage(payload.url),
+     extractPageWithRenderedMedia(payload.url,payload.renderPage!==false),
      extractVideoCollection(payload.url,{start})
     ]);
     if(pageResult.status==='fulfilled')page=pageResult.value;
     else pageError=pageResult.reason;
     if(collectionResult.status==='fulfilled')collection=collectionResult.value;
     else collectionError=collectionResult.reason;
-   }else page=await extractPage(payload.url);
+   }else page=await extractPageWithRenderedMedia(payload.url,payload.renderPage!==false);
    if(collection){
     const media=collection.media.map((entry,index)=>({...entry,position:start-1+index}));
     result={
@@ -270,6 +307,18 @@ const server=http.createServer(async(request,response)=>{
    if(!Number.isSafeInteger(start)||start<1||start>maxPlaylistItems||((start-1)%playlistPageSize)!==0){send(response,400,{error:`Playlist position must start at 1 and advance in groups of ${playlistPageSize}, up to ${maxPlaylistItems-playlistPageSize+1}.`});return}
    const url=new URL(payload.url);
    const collection=await extractVideoCollection(payload.url,{start});
+   if(!collection){
+    send(response,200,{
+     title:videoCollectionTitle(payload.url)||url.hostname,
+     canonicalUrl:payload.url,
+     media:[],
+     start,
+     hasMore:false,
+     playlistPaging:false,
+     truncated:false
+    });
+    return;
+   }
    const media=collection.media.map((entry,index)=>({...entry,position:start-1+index}));
    send(response,200,{
     title:videoCollectionTitle(payload.url)||url.hostname,
