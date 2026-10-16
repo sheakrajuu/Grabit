@@ -385,7 +385,7 @@ function galleryPdfDialog(id){
  const item=V.items.find(entry=>entry.id===id),images=item?.media.filter(media=>media.type==='image')||[];
  const links=item?.sourceUrls?.length?item.sourceUrls:item?.sourceUrl?[item.sourceUrl]:[];
  if(!item||(!images.length&&links.length<2)){toast('This gallery has no images or image links to export.');return}
- const imageOptions=images.length?`<p class="hint">Select the images to include. Each image gets its own uncropped page sized to its proportions. Up to 200 images per PDF.</p><div class="pdf-image-options">${images.map((media,index)=>`<label class="pdf-image-option"><input type="checkbox" data-pdf-image="${index}"${index<200?' checked':''}><img src="${esc(mediaSource(media))}" alt=""><span>${esc(media.alt||`Image ${index+1}`)}</span></label>`).join('')}</div>${images.length>200?'<p class="hint" role="status">Only the first 200 images are selected by default.</p>':''}`:`<p class="hint">Grabit will find the publicly accessible images on all ${links.length} saved links and combine them into one PDF. Up to 200 images per PDF.</p>`;
+ const imageOptions=images.length?`<p class="hint">Select the images to include. Each image gets its own uncropped page sized to its proportions.</p><div class="pdf-image-options">${images.map((media,index)=>`<label class="pdf-image-option"><input type="checkbox" data-pdf-image="${index}" checked><img src="${esc(mediaSource(media))}" alt=""><span>${esc(media.alt||`Image ${index+1}`)}</span></label>`).join('')}</div>`:`<p class="hint">Grabit will find the publicly accessible images on all ${links.length} saved links and combine them into one PDF.</p>`;
  show(`<b>Download gallery as PDF</b>${imageOptions}<div class="row"><button class="b p" data-action="downloadGalleryPdf" data-id="${esc(id)}">${images.length?'Create and download PDF':'Find images and create PDF'}</button><button class="b" data-action="close">Cancel</button></div>`);
 }
 async function downloadGalleryPdf(id){
@@ -417,7 +417,6 @@ async function downloadGalleryPdf(id){
    }));
    images=imagesByPage.flat();
    if(!images.length)throw new Error('No downloadable images were found on these links.');
-   if(images.length>200)throw new Error('These links contain more than 200 images. Export smaller groups of links.');
    linksWithoutImages=imagesByPage.filter(pageImages=>!pageImages.length).length;
   }
   const response=await fetch('/api/pdf',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({images})});

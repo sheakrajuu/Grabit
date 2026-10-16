@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {deflateSync} from 'node:zlib';
 import {PDFDocument} from 'pdf-lib';
-import {createImagePdf,MAX_PDF_IMAGES} from '../server/pdf.js';
+import {createImagePdf} from '../server/pdf.js';
 
 function crc32(bytes){
  let crc=0xffffffff;
@@ -47,7 +47,14 @@ test('creates one uncropped custom-size PDF page per selected image',async()=>{
  assert.ok(Math.abs(pages[1].getHeight()-144)<0.01);
 });
 
-test('rejects unsupported image types and excessive image selections',async()=>{
+test('creates PDFs with more than 200 image pages',async()=>{
+ const image=`data:image/png;base64,${testPng(1,1).toString('base64')}`;
+ const bytes=await createImagePdf(Array.from({length:201},()=>({data:image})));
+ const pdf=await PDFDocument.load(bytes);
+ assert.equal(pdf.getPages().length,201);
+});
+
+test('rejects unsupported image types and empty selections',async()=>{
  await assert.rejects(createImagePdf([{data:'data:image/webp;base64,AAAA'}]),/Only JPEG and PNG/);
- await assert.rejects(createImagePdf(Array.from({length:MAX_PDF_IMAGES+1},()=>({data:''}))),/between 1 and 200/);
+ await assert.rejects(createImagePdf([]),/at least one image/);
 });

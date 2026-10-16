@@ -80,7 +80,7 @@ To share your full library, open **Export library → Create encrypted one-time 
 - Persistent hidden-media selections for a page, plus hide/unhide controls in gallery and playlist viewers.
 - Unrestricted server gallery uploads for arbitrary file types, streamed to disk and served as attachments, with a hosted gallery view.
 - Server-streamed downloads for publicly accessible direct media files without an app-imposed size cap, with a browser-local Download history.
-- Gallery PDF export lets you select images; each image gets an uncropped, custom-proportions page rather than A4. Multi-link groups can collect public images from every saved link into one PDF. JPEG and PNG only, up to 200 images, 25 MB each, and 80 MB total source data.
+- Gallery PDF export lets you select any number of images; each image gets an uncropped, custom-proportions page rather than A4. Multi-link groups can collect public images from every saved link into one PDF. JPEG and PNG only; actual PDF size is limited by available server resources.
 - One-time library share links that are consumed after successful import, with JSON export backups.
 - Share an individual saved item or multiple selected items without sharing the rest of the library; tags are not part of the library.
 - Search, type filtering, sorting, sections, URL duplicate handling, and multi-select organization tools.

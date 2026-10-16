@@ -4,7 +4,7 @@ import path from 'node:path';
 import {Transform} from 'node:stream';
 import {fileURLToPath} from 'node:url';
 import {extractPage,openPublicMedia,safeDownloadFilename} from './server/extractor.js';
-import {createImagePdf,MAX_PDF_IMAGES} from './server/pdf.js';
+import {createImagePdf} from './server/pdf.js';
 import {extractVideoCollection,isVideoCollectionUrl,maxPlaylistItems,playlistPageSize,resolveVideo,startVideoDownload} from './server/playlist.js';
 import {createShareStore,MAX_SHARE_BYTES} from './server/share-store.js';
 import {createGalleryStore} from './server/gallery-store.js';
@@ -15,7 +15,6 @@ const root=path.dirname(fileURLToPath(import.meta.url));
 const host=process.env.HOST||(process.env.PORT?'0.0.0.0':'127.0.0.1');
 const port=Number(process.env.PORT||3000);
 const MAX_BODY_BYTES=16*1024;
-const MAX_PDF_BODY_BYTES=110*1024*1024;
 const MAX_PIXIV_ARCHIVE_BYTES=80*1024*1024;
 const RATE_WINDOW_MS=60_000;
 const MAX_PREVIEWS_PER_WINDOW=12;
@@ -370,8 +369,8 @@ const server=http.createServer(async(request,response)=>{
   if(request.method!=='POST'){send(response,405,{error:'Use POST to create a PDF.'});return}
   if(!allowDownload(request)){send(response,429,{error:'Too many downloads. Wait a minute and retry.'});return}
   try{
-   const payload=await readJson(request,MAX_PDF_BODY_BYTES,'PDF request exceeds the 110 MB limit.');
-   if(!Array.isArray(payload.images)||payload.images.length<1||payload.images.length>MAX_PDF_IMAGES){send(response,400,{error:`Select between 1 and ${MAX_PDF_IMAGES} images for a PDF.`});return}
+  const payload=await readJson(request,Infinity);
+  if(!Array.isArray(payload.images)||payload.images.length<1){send(response,400,{error:'Select at least one image for a PDF.'});return}
    const pdf=await createImagePdf(payload.images);
    response.writeHead(200,{'content-type':'application/pdf','content-disposition':'attachment; filename="grabit-gallery.pdf"','content-length':pdf.length,'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'});
    response.end(pdf);
