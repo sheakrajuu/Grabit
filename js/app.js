@@ -14,6 +14,8 @@ const VIDEO_EXTENSION_BY_MIME={'video/mp4':'mp4','video/quicktime':'mov','video/
 const localMediaUrls=new Map();
 let appUpdatePending=false;
 let reloadingForAppUpdate=false;
+let browserImportReady=false;
+let pendingBrowserImport=null;
 const icon=content=>`<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${content}</svg>`;
 const icons={
  inbox:'<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z"/>',
@@ -259,6 +261,55 @@ function previewPanel(){
  const saveButton=$('#saveImportButton');
  if(saveButton)saveButton.textContent=countSelected?'Save selected media':'Save links for viewing';
 }
+function openBrowserImport(payload){
+ const pageUrl=validUrl(payload?.url);
+ if(payload?.version!==1||!pageUrl||!Array.isArray(payload.media)){
+  toast('The browser extension sent invalid page data.');
+  return;
+ }
+ const seen=new Set(),media=[];
+ for(const entry of payload.media.slice(0,500)){
+  if(!entry||!['image','video'].includes(entry.type))continue;
+  const source=validUrl(entry.url);
+  if(!source||seen.has(source.href))continue;
+  seen.add(source.href);
+  media.push({
+   type:entry.type,
+   url:source.href,
+   sourceUrl:source.href,
+   thumbnailUrl:validUrl(entry.thumbnailUrl)?.href||source.href,
+   alt:typeof entry.alt==='string'?entry.alt.slice(0,240):''
+  });
+ }
+ const page={
+  url:pageUrl.href,
+  canonicalUrl:normalized(pageUrl.href),
+  title:typeof payload.title==='string'?payload.title.slice(0,240):host(pageUrl.href),
+  description:typeof payload.description==='string'?payload.description.slice(0,1500):'',
+  media,
+  mediaWarning:[typeof payload.warning==='string'?payload.warning.slice(0,1000):'',media.length?'':'No image or video URLs were found in this page.'].filter(Boolean).join(' '),
+  truncated:payload.truncated===true,
+  hiddenUrls:new Set(),
+  selected:new Set(media.map(entry=>entry.url)),
+  extracted:true
+ };
+ if(V.task?.kind==='preview')cancelTask();
+ V.previewRequestId++;
+ importDialog();
+ $('#urls').value=page.url;
+ $('#importTitle').value=page.title;
+ $('#importDescription').value=page.description;
+ V.preview={pages:[page],errors:[],showHidden:false,discoveryPending:false};
+ previewPanel();
+}
+addEventListener('grabit:browser-import',event=>{
+ pendingBrowserImport=event.detail;
+ if(browserImportReady){
+  const payload=pendingBrowserImport;
+  pendingBrowserImport=null;
+  openBrowserImport(payload);
+ }
+});
 async function previewPage(requestedUrls){
  const inputs=requestedUrls||$('#urls').value.split(/\r?\n/).map(value=>value.trim()).filter(Boolean);
  const urls=[...new Set(inputs.map(value=>validUrl(value)?.href).filter(Boolean))];
@@ -1526,7 +1577,8 @@ async function init(){
  try{
   const mobile=matchMedia('(max-width:760px)').matches;$('#sbt').setAttribute('aria-expanded',String(mobile?$('#win').classList.contains('open'):!$('#win').classList.contains('hide')));
   let theme='dark';try{theme=localStorage.getItem('grabit-theme')||theme}catch(error){console.warn('Could not read the saved theme preference:',error)}
-  applyTheme(theme);loadDownloadHistory();watchForAppUpdates();await openDB();await migrateLegacy();await refreshLibrary();
+  applyTheme(theme);loadDownloadHistory();watchForAppUpdates();await openDB();await migrateLegacy();await refreshLibrary();browserImportReady=true;
+  if(pendingBrowserImport){const payload=pendingBrowserImport;pendingBrowserImport=null;openBrowserImport(payload)}
   if(hasLibraryShareLink(location.href)){
    const shareUrl=location.href,url=new URL(location.href);url.hash='';history.replaceState(history.state,'',url);
    try{confirmLibraryRestore(await readLibraryShareLink(shareUrl),'shared library',isShortLibraryShareLink(shareUrl)?shareUrl:'')}

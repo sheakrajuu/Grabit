@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Grabit browser import",
+  "version": "1.0.0",
+  "description": "Send media from a page you are signed into to your local Grabit library.",
+  "minimum_chrome_version": "102",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:3000/*",
+    "http://localhost:3000/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Send this page to Grabit"
+  }
+}
