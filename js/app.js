@@ -171,7 +171,7 @@ function matchingItems(){
  items.sort((a,b)=>V.view==='recent'||V.sort==='recent'?savedAt(b)-savedAt(a):V.sort==='oldest'?savedAt(a)-savedAt(b):V.sort==='alphabetical'?a.title.localeCompare(b.title):updatedAt(b)-updatedAt(a));
  return items;
 }
-function thumbUrl(item){if(item.type==='note')return '';return pixivImageProxyUrl(item.thumbnailUrl||item.media?.find(m=>m.type==='image')?.sourceUrl||item.media?.find(m=>m.thumbnailUrl)?.thumbnailUrl||fallbackThumbnail(item.type))}
+function thumbUrl(item){if(item.type==='note')return '';const image=item.media?.find(media=>media.type==='image');return pixivImageProxyUrl(item.thumbnailUrl||image?.sourceUrl||image?.thumbnailUrl||(image?.storedBlob instanceof Blob?mediaSource(image):'')||fallbackThumbnail(item.type))}
 function card(item){
  const thumb=thumbUrl(item);const hasMorePlaylistVideos=item.type==='playlist'&&item.sourcePages?.some(page=>page.playlistPaging&&page.playlistHasMore);const labels={bookmark:'WEB',note:'NOTE',image:'IMAGE',video:'VIDEO',file:'FILE',gallery:`GALLERY · ${item.media.length}`,playlist:`PLAYLIST · ${item.media.length}${hasMorePlaylistVideos?'+':''}`};
  const image=item.type==='note'?'':`<img class="art" src="${esc(thumb)}" alt="" loading="lazy" decoding="async">`;
@@ -364,7 +364,7 @@ function noteDialog(){
 }
 function uploadDialog(droppedFiles=[]){
  V.droppedFiles=droppedFiles;
- show(`<b>Add media</b><p class="hint">Images and videos are saved in this browser. Other files are uploaded to the server; ZIP, CBZ, and EPUB archives with images become browsable galleries. Server uploads are public to anyone with the service URL.</p>${V.droppedFiles?.length?`<p>${V.droppedFiles.length} ${V.droppedFiles.length===1?'file is':'files are'} ready to add.</p>`:''}<label for="imageFiles">Choose files</label><input class="in" id="imageFiles" type="file" accept="*/*" multiple><label for="photoGalleryTitle">Gallery title (optional)</label><input class="in" id="photoGalleryTitle" maxlength="240" placeholder="Photo gallery"><label>Save to</label>${destinationOptions()}<div class="row"><button class="b p" data-action="saveImages">Add media</button><button class="b" data-action="close">Cancel</button></div>`);
+ show(`<b>Add media</b><p class="hint">Images and videos are saved in this browser. ZIP, CBZ, and EPUB archives are unpacked by the server, then the archive and image pages are saved in this browser for later viewing. The upload is also public on the server to anyone with its service URL.</p>${V.droppedFiles?.length?`<p>${V.droppedFiles.length} ${V.droppedFiles.length===1?'file is':'files are'} ready to add.</p>`:''}<label for="imageFiles">Choose files</label><input class="in" id="imageFiles" type="file" accept="*/*" multiple><label for="photoGalleryTitle">Gallery title (optional)</label><input class="in" id="photoGalleryTitle" maxlength="240" placeholder="Photo gallery"><label>Save to</label>${destinationOptions()}<div class="row"><button class="b p" data-action="saveImages">Add media</button><button class="b" data-action="close">Cancel</button></div>`);
 }
 function createSection(){show(`<b>New section</b><label for="newSectionName">Name</label><input class="in" id="newSectionName" maxlength="100" placeholder="e.g. Design ideas"><div class="row"><button class="b p" data-action="createSection">Create section</button><button class="b" data-action="close">Cancel</button></div>`)}
 async function saveNewSection(){
@@ -601,7 +601,8 @@ async function loadWatchPage(item){
  watch.loading=true;watch.extractionAttempted=true;renderWatchPage(false,'Loading page media…');
  try{
   const savedPages=Array.isArray(item.sourcePages)?item.sourcePages:[];
-  const localGallery=item.type==='gallery'&&!item.sourceUrl&&!item.sourceUrls?.length&&item.media.some(media=>media.type==='image'&&(media.storedDataUrl||media.storedBlob instanceof Blob||media.convertedDataUrl||media.convertedBlob instanceof Blob));
+  const browserArchiveGallery=item.type==='gallery'&&item.description?.startsWith('Pages extracted from ')&&item.media.some(media=>media.type==='image'&&media.storedBlob instanceof Blob);
+  const localGallery=browserArchiveGallery||item.type==='gallery'&&!item.sourceUrl&&!item.sourceUrls?.length&&item.media.some(media=>media.type==='image'&&(media.storedDataUrl||media.storedBlob instanceof Blob||media.convertedDataUrl||media.convertedBlob instanceof Blob));
   const groupedGallery=item.type==='gallery'&&(item.galleryLinksGrouped||isDirectImageLinkGallery(item));
   const urls=localGallery?[]:groupedGallery?[item.sourceUrl||item.sourceUrls?.[0]||savedPages[0]?.url]:Array.isArray(item.sourceUrls)&&item.sourceUrls.length?item.sourceUrls:[item.sourceUrl];
   const pages=[];
@@ -862,7 +863,7 @@ function renderItemViewer(item){
   const thumbnail=thumbUrl(item);
   display=thumbnail?`<div class="bookmark-preview"><img src="${esc(thumbnail)}" alt=""></div>`:'<div class="bookmark-preview bookmark-fallback" aria-hidden="true">WEB</div>';
  }
- const details=`<div class="viewer-copy"><h2>${esc(item.title)}</h2>${item.sourceDomain?`<div class="source">${esc(item.sourceDomain)}</div>`:''}${item.sourceUrl&&validUrl(item.sourceUrl)?`<button class="b" data-action="openSource" data-url="${esc(item.sourceUrl)}">Open original</button>`:''}${item.description?`<p>${esc(item.description)}</p>`:''}${item.notes?`<p class="viewer-notes">${esc(item.notes)}</p>`:''}</div>`;
+ const details=`<div class="viewer-copy"><h2>${esc(item.title)}</h2>${item.sourceDomain?`<div class="source">${esc(item.sourceDomain)}</div>`:''}${item.archiveBlob instanceof Blob?`<a class="b" href="${esc(mediaSource({storedBlob:item.archiveBlob}))}" download="${esc(item.archiveFileName||`${item.title}.cbz`)}">Download original archive</a>`:item.sourceUrl&&validUrl(item.sourceUrl)?`<button class="b" data-action="openSource" data-url="${esc(item.sourceUrl)}">Open original</button>`:''}${item.description?`<p>${esc(item.description)}</p>`:''}${item.notes?`<p class="viewer-notes">${esc(item.notes)}</p>`:''}</div>`;
  show(imageViewMode?display:`<div class="viewer-head"><div><span class="bd-inline">${esc(item.type)}${['gallery','playlist'].includes(item.type)?` · ${media.length} ${item.type==='playlist'?'videos':'images'}`:''}</span></div><button class="ib" data-action="close" aria-label="Close viewer">×</button></div>${display}${details}`,true);
  if(imageViewMode)$('#md').classList.add('image-view-mode');
 }
@@ -992,9 +993,20 @@ async function saveServerFile(file,sectionIds){
  if(!response.ok)throw new Error(result.error||'Could not upload this file.');
  if(Array.isArray(result.pages)&&result.pages.length){
   const pages=[...result.pages].sort((left,right)=>left.entryName.localeCompare(right.entryName,undefined,{numeric:true,sensitivity:'base'}));
-  const media=pages.map((page,position)=>({type:'image',sourceUrl:new URL(page.url,location.href).href,alt:page.entryName,position}));
+  const media=[];
+  for(let start=0;start<pages.length;start+=8){
+   const batch=await Promise.all(pages.slice(start,start+8).map(async(page,index)=>{
+    const response=await fetch(new URL(page.url,location.href),{cache:'no-store'});
+    if(!response.ok)throw new Error(`Could not save extracted page ${page.entryName} in this browser.`);
+    const storedBlob=await response.blob();
+    return{type:'image',sourceUrl:'',storedBlob,mimeType:storedBlob.type||page.contentType,size:storedBlob.size,alt:page.entryName,position:start+index};
+   }));
+   media.push(...batch);
+  }
   const title=$('#photoGalleryTitle')?.value.trim()||file.name.replace(/\.[^.]+$/,'')||file.name;
-  const gallery=emptyItem({type:'gallery',title,description:`Pages extracted from ${file.name}`,sourceUrl:new URL(result.url,location.href).href,media,thumbnailUrl:media[0].sourceUrl,sectionIds});
+  const gallery=emptyItem({type:'gallery',title,description:`Pages extracted from ${file.name}`,media,sectionIds});
+  gallery.archiveBlob=file;
+  gallery.archiveFileName=file.name;
   gallery.sourcePages=[{url:'',title,description:gallery.description,index:0,extracted:true,media:media.map((entry,index)=>({...entry,pageIndex:0,position:index}))}];
   await storeItem(gallery);
   return{gallery:true,warning:result.archiveWarning||''};
@@ -1126,7 +1138,7 @@ async function downloadJson(){
  }catch(error){reportError('Could not export library',error)}
 }
 async function libraryExportData(){
- const items=await Promise.all(V.items.map(async({tags,...item})=>({...item,media:await Promise.all((item.media||[]).map(async media=>{
+ const items=await Promise.all(V.items.map(async({tags,archiveBlob,...item})=>({...item,...(archiveBlob instanceof Blob?{archiveDataUrl:await blobAsDataUrl(archiveBlob)}:{}),media:await Promise.all((item.media||[]).map(async media=>{
   const {storedBlob,convertedBlob,...exportMedia}=media;
   if(storedBlob instanceof Blob){exportMedia.storedDataUrl=await blobAsDataUrl(storedBlob);exportMedia.mimeType=media.mimeType||storedBlob.type;exportMedia.size=media.size??storedBlob.size}
   if(convertedBlob instanceof Blob)exportMedia.convertedDataUrl=await blobAsDataUrl(convertedBlob);
@@ -1210,7 +1222,8 @@ async function commitRestore(){
    if(item.media.some(m=>m.sourceUrl&&!validUrl(m.sourceUrl)&&!m.storedDataUrl)){updateTask('Importing backup',++task.completed,task.total,task);continue}
    if(item.canonicalUrl&&V.items.some(x=>x.canonicalUrl===item.canonicalUrl)){duplicates++;updateTask('Importing backup',++task.completed,task.total,task);continue}
    const sectionIds=item.sectionIds.map(oldId=>sectionMap.get(oldId)).filter(Boolean);const now=new Date().toISOString();
-   await storeItem({...item,id:V.items.some(x=>x.id===item.id)?uid():item.id,sectionIds,inbox:sectionIds.length===0,savedAt:now,updatedAt:now});added++;updateTask('Importing backup',++task.completed,task.total,task);
+  const archiveBlob=item.archiveDataUrl?await(await fetch(item.archiveDataUrl)).blob():undefined;const{archiveDataUrl,...restoredItem}=item;
+  await storeItem({...restoredItem,...(archiveBlob?{archiveBlob}:{}),id:V.items.some(x=>x.id===item.id)?uid():item.id,sectionIds,inbox:sectionIds.length===0,savedAt:now,updatedAt:now});added++;updateTask('Importing backup',++task.completed,task.total,task);
   }
   await refreshLibrary();finishTask(task);hide();render();
   let shareMessage='';
