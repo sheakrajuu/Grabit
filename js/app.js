@@ -1,4 +1,4 @@
-import {$,esc,uid,host,validUrl,normalized,classify,fallbackThumbnail,socialMediaEmbed,videoCollectionTitle,pixivImageProxyUrl,expandPageNumberUrls,detectPageNumberPattern} from './utils.js';
+import {$,esc,uid,host,validUrl,normalized,classify,fallbackThumbnail,socialMediaEmbed,videoCollectionTitle,pixivImageProxyUrl,expandPageNumberUrls,detectPageNumberPattern,normalizeTags,groupPageSeries} from './utils.js';
 import {openDB,migrateLegacy,loadLibrary,storeItem as persistItem,storeSection as persistSection,removeItem as deleteStoredItem,removeSection as deleteStoredSection} from './storage.js';
 import {previewUrl,discoverPlaylistUrl,resolveVideoUrl,videoDownloadUrl} from './importer.js';
 import {isVideoFile,videoFile,preparePixivUgoira} from './video-transcoder.js';
@@ -166,7 +166,8 @@ function matchingItems(){
   if(V.view==='section'&&!(i.sectionIds||[]).includes(V.sectionId))return false;
   if(V.filterSectionId&&!(i.sectionIds||[]).includes(V.filterSectionId))return false;
   if(!matchesContentType(i,V.type))return false;
-  if(q&&!`${i.title} ${i.description} ${i.notes} ${i.sourceDomain} ${i.sourceUrl} ${i.originalUrl}`.toLocaleLowerCase().includes(q))return false;
+  const searchText=`${i.title} ${i.description} ${i.notes} ${i.sourceDomain} ${i.sourceUrl} ${i.originalUrl} ${(i.tags||[]).join(' ')}`.toLocaleLowerCase();
+  if(q&&!searchText.includes(q))return false;
   return true;
  });
  const savedAt=item=>Date.parse(item.savedAt)||0,updatedAt=item=>Date.parse(item.updatedAt)||0;
@@ -223,8 +224,8 @@ function render(){
  main.innerHTML=toolbar+(items.length?`<div class="grid">${visibleItems.map(card).join('')}</div>${pagination}`:emptyContent);
 }
 function imageFile(file){return new Promise((resolve,reject)=>{if(!file||!file.type.startsWith('image/')){reject(new Error('Choose a valid image file.'));return}if(file.size>12*1024*1024){reject(new Error('Images must be smaller than 12 MB for local storage.'));return}const reader=new FileReader();reader.onerror=()=>reject(new Error('Could not read the selected image.'));reader.onload=()=>{const image=new Image();image.onerror=()=>reject(new Error('The selected file is not a readable image.'));image.onload=()=>{const scale=Math.min(1,1600/Math.max(image.width,image.height)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.width*scale));canvas.height=Math.max(1,Math.round(image.height*scale));const ctx=canvas.getContext('2d');if(!ctx){reject(new Error('Image processing is unavailable.'));return}ctx.drawImage(image,0,0,canvas.width,canvas.height);resolve({data:canvas.toDataURL('image/jpeg',.84),width:canvas.width,height:canvas.height})};image.src=reader.result};reader.readAsDataURL(file)})}
-function emptyItem({type,title,sourceUrl='',media=[],thumbnailUrl='',notes='',description='',sectionIds=[]}){
- const now=new Date().toISOString();return{id:uid(),type,title:title.trim()||host(sourceUrl)||'Untitled',description,notes,sourceUrl,originalUrl:sourceUrl,canonicalUrl:normalized(sourceUrl),sourceDomain:host(sourceUrl),thumbnailUrl,media:media.map((m,position)=>({...m,id:m.id||uid(),position})),sectionIds,isFavorite:false,isArchived:false,inbox:sectionIds.length===0,savedAt:now,updatedAt:now};
+function emptyItem({type,title,sourceUrl='',media=[],thumbnailUrl='',notes='',description='',sectionIds=[],tags=[]}={}){
+ const now=new Date().toISOString();return{id:uid(),type,title:title.trim()||host(sourceUrl)||'Untitled',description,notes,sourceUrl,originalUrl:sourceUrl,canonicalUrl:normalized(sourceUrl),sourceDomain:host(sourceUrl),thumbnailUrl,media:media.map((m,position)=>({...m,id:m.id||uid(),position})),sectionIds,tags:normalizeTags(tags),isFavorite:false,isArchived:false,inbox:sectionIds.length===0,savedAt:now,updatedAt:now};
 }
 function addDialog(){
  show(`<b>Add to your library</b><p class="hint">Save links, write a note, or upload images and videos.</p><div class="row"><button class="b p" data-action="importDialog">Save links</button><button class="b" data-action="noteDialog">New note</button><button class="b" data-action="uploadDialog">Upload media</button><button class="b" data-action="close">Cancel</button></div>`);
@@ -510,12 +511,18 @@ function orderedMedia(item){return(item.media||[]).slice().sort((a,b)=>(a.positi
 function mediaSource(media){const blob=media.convertedBlob instanceof Blob?media.convertedBlob:media.storedBlob instanceof Blob?media.storedBlob:null;if(blob){let url=localMediaUrls.get(blob);if(!url){url=URL.createObjectURL(blob);localMediaUrls.set(blob,url)}return url}return pixivImageProxyUrl(media.convertedDataUrl||media.storedDataUrl||media.playbackUrl||media.sourceUrl||'')}
 function localVideoAttributes(item,media){if(!media){media=item;item=V.items.find(entry=>entry.media?.some(candidate=>candidate.id===media.id))}const isLocal=media?.type==='video'&&(media.storedBlob instanceof Blob||media.convertedBlob instanceof Blob||media.storedDataUrl?.startsWith('data:video/')||media.convertedDataUrl?.startsWith('data:video/'));return isLocal?`data-local-video="true" data-video-item="${esc(item?.id||'')}" data-video-media="${esc(media.id)}"${media.convertedBlob instanceof Blob||media.convertedDataUrl?' data-video-converted="true"':''}`:''}
 function originalVideoBlob(media){if(media.storedBlob instanceof Blob)return media.storedBlob;if(media.storedDataUrl?.startsWith('data:video/'))return fetch(media.storedDataUrl).then(response=>response.blob());return null}
-function viewerMedia(item){return orderedMedia(item)}
+function viewerMedia(item){
+ const pages=sourcePages(item);
+ return pages.length>1?pages.flatMap(page=>page.media||[]):orderedMedia(item);
+}
 function isDirectImageLinkGallery(item){
  const pages=item.sourcePages||[];
  return item.type==='gallery'&&pages.length>1&&pages.every(page=>page.media?.length===1&&page.media[0].type==='image'&&normalized(page.url)===normalized(page.media[0].sourceUrl||page.media[0].url));
 }
 function sourcePages(item){
+ if(Array.isArray(item.sourcePages)&&item.sourcePages.length>1){
+  return item.sourcePages.map((page,index)=>({...page,index,media:Array.isArray(page.media)?page.media:item.media.filter(media=>(media.pageIndex||0)===index)}));
+ }
  if(item.type==='gallery'&&item.description?.startsWith('Pages extracted from ')&&item.media?.length){
   return[{url:'',title:item.title||'Image gallery',description:item.description,index:0,extracted:true,media:orderedMedia(item)}];
  }
@@ -949,6 +956,7 @@ function editItem(id,returnToViewer=false){
  <label for="detailNotes">Personal notes</label><textarea class="in" id="detailNotes" maxlength="10000">${esc(item.notes||'')}</textarea>
  ${item.type!=='note'?`<label for="detailThumb">Custom thumbnail URL (optional)</label><input class="in" id="detailThumb" type="url" placeholder="https://…" value="${esc(thumbnailValue)}">`:''}
  <label for="detailSource">Source URL</label><input class="in" id="detailSource" type="url" value="${esc(item.sourceUrl||'')}">
+ <label for="detailTags">Tags</label><input class="in" id="detailTags" type="text" value="${esc((item.tags||[]).join(', '))}" placeholder="travel, books, research">
  ${['gallery','playlist'].includes(item.type)?`<label for="mediaUrls">Media URLs (one per line; order is preserved)</label><textarea class="in" id="mediaUrls">${esc(media.map(m=>m.sourceUrl||m.storedDataUrl||'').join('\n'))}</textarea>`:''}
  <label>Sections (uncheck all to remove this item from its sections)</label><div id="detailSections">${sectionOptions(item.sectionIds||[])}</div>
  <label class="checklist"><input id="detailFavorite" type="checkbox"${item.isFavorite?' checked':''}> Favorite</label>
@@ -975,33 +983,42 @@ async function toggleItemInboxVisibility(id){
 }
 function selectedSections(root){const destination=root.querySelector('select[name="destination"]');return destination?(destination.value?[destination.value]:[]):[...root.querySelectorAll('input[name="section"]:checked')].map(x=>x.value)}
 async function saveImports(){
- let urls=[...new Set($('#urls').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean))];if(!urls.length){toast('Enter at least one URL.');return}
+ let rawUrls=[...new Set($('#urls').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean))];if(!rawUrls.length){toast('Enter at least one URL.');return}
  const pagePattern=$('#pageNumbers')?.value?.trim();
+ const pageGroups=[];
+ let urls=[];
  if(pagePattern){
-  const expanded=[];
-  for(const raw of urls){
-   const base=validUrl(raw);
-   if(!base){expanded.push(raw);continue}
-   expanded.push(...expandPageNumberUrls([base.href],pagePattern));
+  for(const raw of rawUrls){
+   const expanded=expandPageNumberUrls([raw],pagePattern);
+   if(expanded.length>1){
+    pageGroups.push(groupPageSeries({baseUrl:validUrl(raw)?.href||raw,urls:expanded,pattern:pagePattern}));
+   }
+   urls.push(...expanded);
   }
-  urls=expanded;
+ }else{
+  urls=rawUrls;
  }
+ urls=[...new Set(urls.map(value=>validUrl(value)?.href||value).filter(Boolean))];
  const valid=[];const invalid=[];for(const raw of urls){const u=validUrl(raw);if(u)valid.push(u.href);else invalid.push(raw)}
  const chosen=selectedSections($('#importSections'));const title=$('#importTitle').value.trim();const description=$('#importDescription').value.trim();
  const duplicates=[];const unique=[];const seen=new Set();
  for(const url of valid){const key=normalized(url);const existing=V.items.find(i=>i.canonicalUrl===key&&!i.isArchived);if(existing||seen.has(key))duplicates.push({url,existing});else{unique.push(url);seen.add(key)}}
- const pending={valid,invalid,chosen,title,description,duplicates,unique};
- if(duplicates.length){V.pendingImport=pending;const first=duplicates.find(x=>x.existing);show(`<b>${duplicates.length===1?'Possible duplicate found':'Possible duplicates found'}</b><p>${countLabel(duplicates.length,'URL')} already exist or appear more than once in this batch. Choose how to continue; duplicates will not be merged automatically.</p><div class="row">${first?`<button class="b" data-action="openDuplicate" data-id="${esc(first.existing.id)}">Open existing item</button>`:''}<button class="b" data-action="continueImport" data-mode="skip">Skip duplicates</button><button class="b" data-action="continueImport" data-mode="section"${chosen.length?'':' disabled'}>Add existing items to selected sections</button><button class="b p" data-action="continueImport" data-mode="save">Save duplicates anyway</button><button class="b" data-action="close">Cancel</button></div>`);return}
+ const pending={valid,invalid,chosen,title,description,duplicates,unique,pageGroups};
+ if(duplicates.length){V.pendingImport=pending;const first=duplicates.find(x=>x.existing);show(`<b>${duplicates.length===1?'Possible duplicate found':'Possible duplicates found'}</b><p>${countLabel(duplicates.length,'URL')} already exist or appear more than once in this batch. Choose how to continue.</p><div class="row">${first?`<button class="b" data-action="openDuplicate" data-id="${esc(first.existing.id)}">Open existing item</button>`:''}<button class="b" data-action="continueImport" data-mode="skip">Skip duplicates</button><button class="b" data-action="continueImport" data-mode="merge">Merge duplicates</button><button class="b" data-action="continueImport" data-mode="section"${chosen.length?'':' disabled'}>Add existing items to selected sections</button><button class="b p" data-action="continueImport" data-mode="save">Save duplicates anyway</button><button class="b" data-action="close">Cancel</button></div>`);return}
  await continueImport(pending,'skip');
 }
 async function continueImport(pending,mode){
- const {valid,invalid,chosen,title,description,duplicates,unique}=pending;
+ const {valid,invalid,chosen,title,description,duplicates,unique,pageGroups=[]}=pending;
  const work=mode==='save'?valid:unique;
  const sectionDuplicates=mode==='section'&&chosen.length?duplicates.filter(entry=>entry.existing):[];
- if(!work.length&&!sectionDuplicates.length){await refreshLibrary();hide();render();toast(`No new links were saved.${duplicates.length?` ${countLabel(duplicates.length,'duplicate')} skipped.`:''}${invalid.length?` ${countLabel(invalid.length,'invalid URL')} ignored.`:''}`);return}
- const task=startTask('Saving links',work.length+sectionDuplicates.length,'import');
- const videoCollections=work.filter(url=>videoCollectionTitle(url));
- const otherUrls=work.filter(url=>!videoCollectionTitle(url));
+ const mergeDuplicates=mode==='merge'?duplicates.filter(entry=>entry.existing):[];
+ const groupedUrls=new Set(pageGroups.flatMap(group=>group.urls.map(url=>normalized(url))));
+ const directUrls=work.filter(url=>!groupedUrls.has(normalized(url)));
+ const groupedWork=pageGroups.filter(group=>group.urls.length>1);
+ if(!directUrls.length&&!groupedWork.length&&!sectionDuplicates.length&&!mergeDuplicates.length){await refreshLibrary();hide();render();toast(`No new links were saved.${duplicates.length?` ${countLabel(duplicates.length,'duplicate')} skipped.`:''}${invalid.length?` ${countLabel(invalid.length,'invalid URL')} ignored.`:''}`);return}
+ const task=startTask('Saving links',directUrls.length+groupedWork.length+sectionDuplicates.length+mergeDuplicates.length,'import');
+ const videoCollections=directUrls.filter(url=>videoCollectionTitle(url));
+ const otherUrls=directUrls.filter(url=>!videoCollectionTitle(url));
  const kinds=otherUrls.map(classify);let saved=0;const errors=[];
  const saveButton=$('#saveImportButton');
  if(saveButton){saveButton.disabled=true;saveButton.textContent='Saving…'}
@@ -1011,6 +1028,22 @@ async function continueImport(pending,mode){
    taskCancelled(task);
    existing.sectionIds=[...new Set([...(existing.sectionIds||[]),...chosen])];existing.inbox=false;existing.updatedAt=new Date().toISOString();await storeItem(existing);
    updateTask('Saving links',++task.completed,task.total,task);
+  }
+  for(const {existing,url}of mergeDuplicates){
+   taskCancelled(task);
+   if(!existing)return;
+   const nextUrls=[...(existing.sourceUrls||[existing.sourceUrl].filter(Boolean)),url].filter(Boolean);
+   existing.sourceUrls=[...new Set(nextUrls.map(value=>normalized(value)).filter(Boolean).map(value=>validUrl(value)?.href||value))];
+   if(existing.sourceUrl&&!existing.sourceUrls.includes(existing.sourceUrl))existing.sourceUrl=existing.sourceUrls[0]||existing.sourceUrl;
+   existing.updatedAt=new Date().toISOString();
+   existing.inbox=existing.sectionIds?.length===0;await storeItem(existing);
+   updateTask('Saving links',++task.completed,task.total,task);
+  }
+  for(const group of groupedWork){
+   taskCancelled(task);
+   const mediaList=group.urls.map((url,index)=>({type:classify(url),sourceUrl:url,thumbnailUrl:classify(url)==='image'?url:fallbackThumbnail('video'),position:index,pageIndex:index}));
+   const item=emptyItem({type:'gallery',title:title||group.baseUrl&&host(group.baseUrl)||'Page series',description:description||`Series from ${host(group.baseUrl)||group.baseUrl}`,sourceUrl:group.baseUrl,media:mediaList,thumbnailUrl:mediaList.find(media=>media.type==='image')?.sourceUrl||mediaList[0]?.thumbnailUrl||fallbackThumbnail('gallery'),sectionIds:chosen,tags:normalizeTags(title?`${title}, pages`:'pages')});
+   item.sourceUrls=group.urls;item.sourcePages=group.urls.map((url,index)=>({url,canonicalUrl:normalized(url),title:`Page ${group.pages[index]||index+1}`,description:'',index,media:[mediaList[index]],extracted:true}));item.galleryLinksGrouped=true;await storeItem(item);saved++;updateTask('Saving links',++task.completed,task.total,task);
   }
   for(const url of videoCollections){
    taskCancelled(task);
@@ -1170,7 +1203,7 @@ async function saveDetail(id){
   if(lines.some(x=>!validUrl(x))){toast('Every media URL must use http or https.');return}
   media=lines.map((url,position)=>({...media.find(m=>m.sourceUrl===url)||{},id:media.find(m=>m.sourceUrl===url)?.id||uid(),type:item.type==='gallery'?'image':'video',sourceUrl:url,storedDataUrl:undefined,position}));
  }
- const updated={...item,title:$('#detailTitle').value.trim()||item.title,description:$('#detailDescription').value.trim(),notes:$('#detailNotes').value.trim(),thumbnailUrl:item.type==='note'?'':thumb||media.find(m=>m.storedDataUrl)?.storedDataUrl||media.find(m=>m.type==='image')?.sourceUrl||'',sourceUrl:source,canonicalUrl:normalized(source),sourceDomain:host(source),media:media.map(entry=>({...entry})),sectionIds:selectedSections($('#detailSections')),isFavorite:$('#detailFavorite').checked,updatedAt:new Date().toISOString()};
+ const updated={...item,title:$('#detailTitle').value.trim()||item.title,description:$('#detailDescription').value.trim(),notes:$('#detailNotes').value.trim(),thumbnailUrl:item.type==='note'?'':thumb||media.find(m=>m.storedDataUrl)?.storedDataUrl||media.find(m=>m.type==='image')?.sourceUrl||'',sourceUrl:source,canonicalUrl:normalized(source),sourceDomain:host(source),media:media.map(entry=>({...entry})),sectionIds:selectedSections($('#detailSections')),tags:normalizeTags($('#detailTags').value),isFavorite:$('#detailFavorite').checked,updatedAt:new Date().toISOString()};
  if(['image','video'].includes(item.type)&&updated.media[0]&&source!==item.sourceUrl)updated.media[0].sourceUrl=source;
  updated.inbox=updated.sectionIds.length===0;updated.hiddenFromInbox=Boolean(item.hiddenFromInbox&&updated.sectionIds.length);
  try{

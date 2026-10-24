@@ -36,6 +36,27 @@ export function parsePageNumberList(value){
  return numbers.sort((a,b)=>a-b);
 }
 
+export function normalizeTags(value){
+ const input=Array.isArray(value)?value:[String(value??'')];
+ const tags=[];
+ const seen=new Set();
+ for(const entry of input){
+  for(const part of String(entry).split(/[\n,]+/)){
+   const tag=part.trim().replace(/^#+/,'').replace(/\s+/g,' ').toLowerCase();
+   if(!tag||tag.length>40||seen.has(tag))continue;
+   seen.add(tag);tags.push(tag);
+  }
+ }
+ return tags;
+}
+
+export function groupPageSeries({baseUrl='',urls=[],pattern=''}={}){
+ const list=[...new Set((Array.isArray(urls)?urls:[]).map(value=>validUrl(value)?.href || value).filter(Boolean))];
+ const rule=(pattern||list.map(url=>detectPageNumberPattern(url)).find(Boolean)||'').trim();
+ const pages=parsePageNumberList(rule);
+ return{baseUrl:validUrl(baseUrl)?.href||baseUrl||list[0]||'',pattern:rule,pages,urls:list};
+}
+
 export function detectPageNumberPattern(rawUrl){
  if(typeof rawUrl!=='string')return '';
  const text=rawUrl.trim();
