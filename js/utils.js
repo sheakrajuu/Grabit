@@ -6,6 +6,87 @@ export const validUrl=value=>{try{const url=new URL(value);return ['http:','http
 export const isPixivImageUrl=value=>{const url=validUrl(value);return !!url&&url.protocol==='https:'&&!url.port&&(url.hostname.toLowerCase()==='pximg.net'||url.hostname.toLowerCase().endsWith('.pximg.net'))};
 export const pixivImageProxyUrl=value=>isPixivImageUrl(value)?`/api/pixiv-image?url=${encodeURIComponent(new URL(value).href)}`:value;
 export const normalized=value=>{const url=validUrl(value);if(!url)return '';url.hash='';if(url.pathname!='/')url.pathname=url.pathname.replace(/\/+$/,'');return url.href};
+export function parsePageNumberList(value){
+ const entry=String(value??'').trim();
+ if(!entry)return [];
+ const normalized=entry
+  .replace(/^(?:page|pages)\s*[:=]/i,'')
+  .replace(/^\s*[:/]+/,'')
+  .replace(/\s+/g,'');
+ const numbers=[];
+ const seen=new Set();
+ const candidates=normalized.split(/[,/;|]+/).filter(Boolean);
+ for(const token of candidates){
+  if(!token)continue;
+  const rangeMatch=token.match(/^(\d+)\s*-\s*(\d+)$/);
+  if(rangeMatch){
+   const start=Number(rangeMatch[1]),end=Number(rangeMatch[2]);
+   if(end<start)continue;
+   for(let page=start;page<=end;page++){
+    if(!seen.has(page)){seen.add(page);numbers.push(page)}
+   }
+   continue;
+  }
+  const singleMatch=token.match(/^\d+$/);
+  if(singleMatch){
+   const page=Number(singleMatch[0]);
+   if(!seen.has(page)){seen.add(page);numbers.push(page)}
+  }
+ }
+ return numbers.sort((a,b)=>a-b);
+}
+
+export function detectPageNumberPattern(rawUrl){
+ if(typeof rawUrl!=='string')return '';
+ const text=rawUrl.trim();
+ if(!text)return '';
+ const patterns=[
+  /(?:[?&]|\b)(?:page(?:s)?|p|pg|pageNo|pageNumber|page_num|pageno|pageIndex)\s*[:=]\s*([0-9\s,/;|\-]+)/i,
+  /(?:[?&]|\b)(?:page(?:s)?|p|pg|pageNo|pageNumber|page_num|pageno|pageIndex)\s*[:=]\s*\{?([0-9\s,/;|\-]+)\}?/i,
+  /(?:page|pages)\s*[:=]\s*([0-9\s,/;|\-]+)/i
+ ];
+ for(const pattern of patterns){
+  const match=text.match(pattern);
+  if(match){return `page:${match[1].trim()}`;}
+ }
+ return '';
+}
+
+export function expandPageNumberUrls(baseUrls,pagePattern=''){
+ const urls=Array.isArray(baseUrls)?baseUrls.filter(Boolean):[baseUrls].filter(Boolean);
+ const pattern=pagePattern?.trim() || urls.map(rawUrl=>detectPageNumberPattern(rawUrl)).find(Boolean) || '';
+ const numbers=parsePageNumberList(pattern);
+ if(!numbers.length)return urls;
+ const expanded=[];
+ for(const rawUrl of urls){
+  if(!rawUrl){continue}
+  const parsed=validUrl(rawUrl);
+  const base=parsed?parsed.href:rawUrl;
+  const sourceUrl=validUrl(rawUrl)||new URL(rawUrl,location?.href||'http://localhost');
+  const nextBase=sourceUrl.href.replace(/([?&])(page(?:s)?|p|pg|pageNo|pageNumber|page_num|pageno|pageIndex)\s*[:=][^&]*/gi,'');
+  for(const page of numbers){
+   let nextUrl;
+   try{
+    const url=new URL(nextBase);
+    const keys=['page','p','pg','pageNo','pageNumber','page_num','pageIndex','pageno'];
+    let replaced=false;
+    for(const key of keys){
+     if(url.searchParams.has(key)){
+      url.searchParams.set(key,String(page));
+      replaced=true;
+      break;
+     }
+    }
+    if(!replaced)url.searchParams.set('page',String(page));
+    nextUrl=url.href;
+   }catch{
+    nextUrl=base;
+   }
+   expanded.push(nextUrl);
+  }
+ }
+ return expanded;
+}
 export const videoCollectionTitle=value=>{const url=validUrl(value);if(!url||!['xhofficial.com','xhamster.com'].includes(url.hostname.toLowerCase().replace(/^www\./,'')))return '';const match=url.pathname.match(/^\/users\/([^/]+)\/videos\/?$/i);if(!match)return '';let name=match[1];try{name=decodeURIComponent(name)}catch{}return`${name} videos`};
 export const EXT_IMAGE=/\.(?:avif|bmp|gif|jpe?g|png|svg|webp)(?:$)/i;
 export const EXT_VIDEO=/\.(?:m4v|mov|mp4|ogv|webm)(?:$)/i;

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {discoverPlaylistUrl,previewUrl,resolveVideoUrl} from '../js/importer.js';
+import {expandPageNumberUrls} from '../js/utils.js';
 
 test('page preview can skip playlist discovery and carries an abort signal',async()=>{
  const originalFetch=globalThis.fetch;
@@ -32,6 +33,17 @@ test('video-list discovery uses its separate API endpoint',async()=>{
   assert.deepEqual(JSON.parse(requestOptions.body),{url:'https://example.com/list'});
   assert.equal(result.playlistPaging,true);
  }finally{globalThis.fetch=originalFetch}
+});
+
+test('page number ranges expand into multiple URLs',()=>{
+ const urls=expandPageNumberUrls(['https://example.com/catalog?page=1'], '2-5');
+ assert.deepEqual(urls,['https://example.com/catalog?page=2','https://example.com/catalog?page=3','https://example.com/catalog?page=4','https://example.com/catalog?page=5']);
+ const mixed=expandPageNumberUrls(['https://example.com/page?page=1','https://example.com/other'], '2/3/4');
+ assert.deepEqual(mixed,['https://example.com/page?page=2','https://example.com/page?page=3','https://example.com/page?page=4','https://example.com/other?page=2','https://example.com/other?page=3','https://example.com/other?page=4']);
+ const pageColon=expandPageNumberUrls(['https://example.com/series'], 'page:2/3/4/5');
+ assert.deepEqual(pageColon,['https://example.com/series?page=2','https://example.com/series?page=3','https://example.com/series?page=4','https://example.com/series?page=5']);
+ const autoDetected=expandPageNumberUrls(['https://example.com/series?page:2/3/4/5']);
+ assert.deepEqual(autoDetected,['https://example.com/series?page=2','https://example.com/series?page=3','https://example.com/series?page=4','https://example.com/series?page=5']);
 });
 
 test('page and video failures use clear public messages without backend details',async()=>{

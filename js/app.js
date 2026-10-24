@@ -1,4 +1,4 @@
-import {$,esc,uid,host,validUrl,normalized,classify,fallbackThumbnail,socialMediaEmbed,videoCollectionTitle,pixivImageProxyUrl} from './utils.js';
+import {$,esc,uid,host,validUrl,normalized,classify,fallbackThumbnail,socialMediaEmbed,videoCollectionTitle,pixivImageProxyUrl,expandPageNumberUrls,detectPageNumberPattern} from './utils.js';
 import {openDB,migrateLegacy,loadLibrary,storeItem as persistItem,storeSection as persistSection,removeItem as deleteStoredItem,removeSection as deleteStoredSection} from './storage.js';
 import {previewUrl,discoverPlaylistUrl,resolveVideoUrl,videoDownloadUrl} from './importer.js';
 import {isVideoFile,videoFile,preparePixivUgoira} from './video-transcoder.js';
@@ -229,10 +229,28 @@ function emptyItem({type,title,sourceUrl='',media=[],thumbnailUrl='',notes='',de
 function addDialog(){
  show(`<b>Add to your library</b><p class="hint">Save links, write a note, or upload images and videos.</p><div class="row"><button class="b p" data-action="importDialog">Save links</button><button class="b" data-action="noteDialog">New note</button><button class="b" data-action="uploadDialog">Upload media</button><button class="b" data-action="close">Cancel</button></div>`);
 }
+function pageNumberSummaryText(){
+ const rawUrls=$('#urls')?.value.split(/\r?\n/).map(value=>value.trim()).filter(Boolean) || [];
+ if(!rawUrls.length)return '';
+ const pagePattern=$('#pageNumbers')?.value.trim() || rawUrls.map(url=>detectPageNumberPattern(url)).find(Boolean) || '';
+ if(!pagePattern)return '';
+ const expanded=rawUrls.flatMap(url=>expandPageNumberUrls([url],pagePattern));
+ const summary=rawUrls.length===1?`This will save ${expanded.length} page URL${expanded.length===1?'':'s'} from the current link.`:`This will save ${expanded.length} page URLs from ${rawUrls.length} starting links.`;
+ return summary;
+}
+function updatePageNumberSummary(){
+ const summary=$('#pageNumberSummary');
+ if(!summary)return;
+ const text=pageNumberSummaryText();
+ summary.textContent=text;
+ summary.hidden=!text;
+}
 function importDialog(){
  V.preview=null;
  show(`<b>Save links</b><p class="hint">Add one or more webpages or media links. Public video lists are saved as playlists, with 10 videos on each page.</p>
  <label for="urls">Webpage or media URLs</label><textarea class="in" id="urls" placeholder="Paste one URL per line" autocomplete="url"></textarea>
+ <label for="pageNumbers">Page numbers (optional)</label><input class="in" id="pageNumbers" placeholder="2-9 or 2/3/4/5 or page:2/3/4" autocomplete="off">
+ <p class="hint" id="pageNumberSummary" hidden></p>
  <label for="mediaKind">Media to detect</label><select class="in" id="mediaKind"><option value="all">Auto-detect images and videos</option><option value="image">Images only</option><option value="video">Videos only</option></select>
  <div class="row"><button class="b p" data-action="previewPage">Preview media</button></div><div id="extractionPreview"></div>
  <label for="importTitle">Title (optional; applied when importing one URL)</label><input class="in" id="importTitle" maxlength="240" placeholder="Page title">
@@ -312,10 +330,12 @@ addEventListener('grabit:browser-import',event=>{
 });
 async function previewPage(requestedUrls){
  const inputs=requestedUrls||$('#urls').value.split(/\r?\n/).map(value=>value.trim()).filter(Boolean);
- const urls=[...new Set(inputs.map(value=>validUrl(value)?.href).filter(Boolean))];
+ const pagePattern=$('#pageNumbers')?.value?.trim() || '';
+ const expandedInputs = pagePattern ? inputs.flatMap(value => expandPageNumberUrls([value],pagePattern)) : inputs;
+ const urls=[...new Set(expandedInputs.map(value=>validUrl(value)?.href).filter(Boolean))];
  if(!urls.length){toast('Enter at least one valid webpage or media URL to preview.');return}
  if(urls.length>12){toast('Preview up to 12 URLs at a time.');return}
- if(urls.length!==inputs.length){toast('One or more URLs are invalid; correct them before previewing.');return}
+ if(urls.length!==expandedInputs.length){toast('One or more URLs are invalid; correct them before previewing.');return}
  const button=$('[data-action="previewPage"]');button.disabled=true;button.textContent='Loading pages…';
  const previewRequestId=++V.previewRequestId;
  const task=startTask('Preparing preview',urls.length,'preview'),signal=task.controller.signal;
@@ -955,7 +975,17 @@ async function toggleItemInboxVisibility(id){
 }
 function selectedSections(root){const destination=root.querySelector('select[name="destination"]');return destination?(destination.value?[destination.value]:[]):[...root.querySelectorAll('input[name="section"]:checked')].map(x=>x.value)}
 async function saveImports(){
- const urls=[...new Set($('#urls').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean))];if(!urls.length){toast('Enter at least one URL.');return}
+ let urls=[...new Set($('#urls').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean))];if(!urls.length){toast('Enter at least one URL.');return}
+ const pagePattern=$('#pageNumbers')?.value?.trim();
+ if(pagePattern){
+  const expanded=[];
+  for(const raw of urls){
+   const base=validUrl(raw);
+   if(!base){expanded.push(raw);continue}
+   expanded.push(...expandPageNumberUrls([base.href],pagePattern));
+  }
+  urls=expanded;
+ }
  const valid=[];const invalid=[];for(const raw of urls){const u=validUrl(raw);if(u)valid.push(u.href);else invalid.push(raw)}
  const chosen=selectedSections($('#importSections'));const title=$('#importTitle').value.trim();const description=$('#importDescription').value.trim();
  const duplicates=[];const unique=[];const seen=new Set();
@@ -1379,7 +1409,7 @@ $('#md').addEventListener('change',e=>{
  if(e.target.id==='mediaKind'){if(V.task?.kind==='preview')cancelTask();V.previewRequestId++;const previewButton=$('[data-action="previewPage"]');if(previewButton){previewButton.disabled=false;previewButton.textContent='Preview media'}if(V.preview){V.preview=null;$('#extractionPreview').innerHTML='';const saveButton=$('#saveImportButton');if(saveButton)saveButton.textContent='Save links'}}
 });
 $('#md').addEventListener('input',e=>{
- if(e.target.id==='urls'){if(V.task?.kind==='preview')cancelTask();V.previewRequestId++;const previewButton=$('[data-action="previewPage"]');if(previewButton){previewButton.disabled=false;previewButton.textContent='Preview media'}if(V.preview){V.preview=null;$('#extractionPreview').innerHTML='';const saveButton=$('#saveImportButton');if(saveButton)saveButton.textContent='Save links'}}
+ if(e.target.id==='urls'||e.target.id==='pageNumbers'){updatePageNumberSummary();if(V.task?.kind==='preview')cancelTask();V.previewRequestId++;const previewButton=$('[data-action="previewPage"]');if(previewButton){previewButton.disabled=false;previewButton.textContent='Preview media'}if(V.preview){V.preview=null;$('#extractionPreview').innerHTML='';const saveButton=$('#saveImportButton');if(saveButton)saveButton.textContent='Save links'}}
 });
 $('#main').addEventListener('click',async e=>{
  const filterOption=e.target.closest('[data-dropdown-option]');
