@@ -55,6 +55,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .watch-content.focused-media-view{display:flex;flex:1;flex-direction:column;min-height:0;width:100%;padding:0 16px}
 .watch-page-info,.watch-stage-caption{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px}
 .watch-page-info a,.watch-message a{color:var(--ac)}
+.watch-loading{display:grid;place-items:center;min-height:160px}
+.watch-loading span{width:28px;height:28px;border:2px solid var(--line);border-top-color:var(--ac);border-radius:50%;animation:gallery-loading-spin .8s linear infinite}
 .watch-grid{position:relative;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,190px),1fr));align-items:start;column-gap:12px;row-gap:12px}
 .watch-tile-wrap{position:absolute;display:block;min-width:0;margin:0;border-radius:12px;overflow:visible;background:var(--card)}
 .watch-tile-wrap.show-actions{z-index:5}
@@ -430,6 +432,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 @keyframes gallery-image-in{from{opacity:.5;transform:scale(.985)}to{opacity:1;transform:scale(1)}}
 @keyframes gallery-slide-from-right{from{opacity:.65;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
 @keyframes gallery-slide-from-left{from{opacity:.65;transform:translateX(-20px)}to{opacity:1;transform:translateX(0)}}
+@keyframes gallery-loading-spin{to{transform:rotate(360deg)}}
 @media(max-width:760px){
  body{overscroll-behavior:none}
  .win{height:100vh;height:100dvh;min-height:0}

@@ -53,7 +53,8 @@ export function normalizeTags(value){
 export function groupPageSeries({baseUrl='',urls=[],pattern=''}={}){
  const list=[...new Set((Array.isArray(urls)?urls:[]).map(value=>validUrl(value)?.href || value).filter(Boolean))];
  const rule=(pattern||list.map(url=>detectPageNumberPattern(url)).find(Boolean)||'').trim();
- const pages=parsePageNumberList(rule);
+ const pageNumbers=list.map(url=>parsePageNumberList(detectPageNumberPattern(url))[0]);
+ const pages=pageNumbers.length===list.length&&pageNumbers.every(Number.isInteger)?pageNumbers:parsePageNumberList(rule);
  return{baseUrl:validUrl(baseUrl)?.href||baseUrl||list[0]||'',pattern:rule,pages,urls:list};
 }
 
@@ -77,6 +78,7 @@ export function expandPageNumberUrls(baseUrls,pagePattern=''){
  const urls=Array.isArray(baseUrls)?baseUrls.filter(Boolean):[baseUrls].filter(Boolean);
  const pattern=pagePattern?.trim() || urls.map(rawUrl=>detectPageNumberPattern(rawUrl)).find(Boolean) || '';
  const numbers=parsePageNumberList(pattern);
+ if(numbers.length&&numbers[0]!==1)numbers.unshift(1);
  if(!numbers.length)return urls;
  const expanded=[];
  for(const rawUrl of urls){

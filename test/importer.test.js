@@ -37,18 +37,20 @@ test('video-list discovery uses its separate API endpoint',async()=>{
 
 test('page number ranges expand into multiple URLs',()=>{
  const urls=expandPageNumberUrls(['https://example.com/catalog?page=1'], '2-5');
- assert.deepEqual(urls,['https://example.com/catalog?page=2','https://example.com/catalog?page=3','https://example.com/catalog?page=4','https://example.com/catalog?page=5']);
+ assert.deepEqual(urls,['https://example.com/catalog?page=1','https://example.com/catalog?page=2','https://example.com/catalog?page=3','https://example.com/catalog?page=4','https://example.com/catalog?page=5']);
  const mixed=expandPageNumberUrls(['https://example.com/page?page=1','https://example.com/other'], '2/3/4');
- assert.deepEqual(mixed,['https://example.com/page?page=2','https://example.com/page?page=3','https://example.com/page?page=4','https://example.com/other?page=2','https://example.com/other?page=3','https://example.com/other?page=4']);
+ assert.deepEqual(mixed,['https://example.com/page?page=1','https://example.com/page?page=2','https://example.com/page?page=3','https://example.com/page?page=4','https://example.com/other?page=1','https://example.com/other?page=2','https://example.com/other?page=3','https://example.com/other?page=4']);
  const pageColon=expandPageNumberUrls(['https://example.com/series'], 'page:2/3/4/5');
- assert.deepEqual(pageColon,['https://example.com/series?page=2','https://example.com/series?page=3','https://example.com/series?page=4','https://example.com/series?page=5']);
+ assert.deepEqual(pageColon,['https://example.com/series?page=1','https://example.com/series?page=2','https://example.com/series?page=3','https://example.com/series?page=4','https://example.com/series?page=5']);
  const autoDetected=expandPageNumberUrls(['https://example.com/series?page:2/3/4/5']);
- assert.deepEqual(autoDetected,['https://example.com/series?page=2','https://example.com/series?page=3','https://example.com/series?page=4','https://example.com/series?page=5']);
+ assert.deepEqual(autoDetected,['https://example.com/series?page=1','https://example.com/series?page=2','https://example.com/series?page=3','https://example.com/series?page=4','https://example.com/series?page=5']);
 });
 
 test('page number groups keep a single logical series together',()=>{
  const grouped=groupPageSeries({baseUrl:'https://example.com/series',urls:['https://example.com/series?page=2','https://example.com/series?page=3','https://example.com/series?page=4','https://example.com/series?page=5'],pattern:'page:2/3/4/5'});
  assert.deepEqual(grouped,{baseUrl:'https://example.com/series',pattern:'page:2/3/4/5',pages:[2,3,4,5],urls:['https://example.com/series?page=2','https://example.com/series?page=3','https://example.com/series?page=4','https://example.com/series?page=5']});
+ const expanded=groupPageSeries({baseUrl:'https://example.com/series',urls:expandPageNumberUrls(['https://example.com/series?page=1'],'2-4'),pattern:'2-4'});
+ assert.deepEqual(expanded.pages,[1,2,3,4]);
 });
 
 test('tag normalization keeps search terms stable and unique',()=>{

@@ -250,7 +250,7 @@ function importDialog(){
  V.preview=null;
  show(`<b>Save links</b><p class="hint">Add one or more webpages or media links. Public video lists are saved as playlists, with 10 videos on each page.</p>
  <label for="urls">Webpage or media URLs</label><textarea class="in" id="urls" placeholder="Paste one URL per line" autocomplete="url"></textarea>
- <label for="pageNumbers">Page numbers (optional)</label><input class="in" id="pageNumbers" placeholder="2-9 or 2/3/4/5 or page:2/3/4" autocomplete="off">
+ <label for="pageNumbers">Page numbers (optional)</label><input class="in" id="pageNumbers" placeholder="1-9 or 1/2/3/4 or page:1/2/3" autocomplete="off">
  <p class="hint" id="pageNumberSummary" hidden></p>
  <label for="mediaKind">Media to detect</label><select class="in" id="mediaKind"><option value="all">Auto-detect images and videos</option><option value="image">Images only</option><option value="video">Videos only</option></select>
  <div class="row"><button class="b p" data-action="previewPage">Preview media</button></div><div id="extractionPreview"></div>
@@ -676,59 +676,65 @@ async function extractPageForWatch(url,{signal,includePlaylist=true}={}){
 }
 async function loadWatchPage(item){
  const watch=V.watch;if(!watch||watch.itemId!==item.id||watch.loading)return;
- watch.loading=true;watch.extractionAttempted=true;renderWatchPage(false,'Loading page media…');
+ watch.loading=true;watch.extractionAttempted=true;renderWatchPage();
  try{
   const savedPages=Array.isArray(item.sourcePages)?item.sourcePages:[];
   const browserArchiveGallery=item.type==='gallery'&&item.description?.startsWith('Pages extracted from ')&&item.media.some(media=>media.type==='image'&&media.storedBlob instanceof Blob);
   const localGallery=browserArchiveGallery||item.type==='gallery'&&!item.sourceUrl&&!item.sourceUrls?.length&&item.media.some(media=>media.type==='image'&&(media.storedDataUrl||media.storedBlob instanceof Blob||media.convertedDataUrl||media.convertedBlob instanceof Blob));
   const groupedGallery=item.type==='gallery'&&(item.galleryLinksGrouped||isDirectImageLinkGallery(item));
   const urls=localGallery?[]:groupedGallery?[item.sourceUrl||item.sourceUrls?.[0]||savedPages[0]?.url]:Array.isArray(item.sourceUrls)&&item.sourceUrls.length?item.sourceUrls:[item.sourceUrl];
-  const pages=[];
-  for(let index=0;index<urls.length;index++){
-   const url=urls[index];if(!url||!validUrl(url))continue;
-   if(groupedGallery){
-    const media=orderedMedia(item).map((entry,position)=>({...entry,type:entry.type||'image',sourceUrl:entry.sourceUrl||entry.url||'',position,pageIndex:0}));
-    pages.push({...savedPages[0],url,title:item.title,index:0,extracted:true,media});
-    continue;
-   }
-   const saved=savedPages.find(page=>normalized(page.url)===normalized(url));
-   if(saved?.playlistPaging){
-    const start=saved.playlistStart||1;
-    try{
-     const result=await previewUrl(url,{start});
-     const refreshedMedia=result.media.filter(media=>media.type==='video').map((media,position)=>({
-      ...media,
-      sourceUrl:media.sourceUrl||media.url,
-      position:start-1+position,
-      pageIndex:index
-     }));
-     const end=start-1+10;
-     const retainedMedia=(saved.media||[]).filter(media=>media.position<start-1||media.position>=end);
-     const refreshedByPosition=new Map(refreshedMedia.map(media=>[media.position,media]));
-     const media=[...retainedMedia,...Array.from(refreshedByPosition.values())].sort((a,b)=>a.position-b.position);
-     const hiddenUrls=new Set(item.hiddenMediaUrls||[]);
-     for(const oldMedia of (saved.media||[]).filter(media=>media.position>=start-1&&media.position<end)){
-      if(hiddenUrls.has(oldMedia.sourceUrl)){
-       hiddenUrls.delete(oldMedia.sourceUrl);
-       hiddenUrls.add(oldMedia.embedUrl||oldMedia.sourceUrl);
-      }
-     }
-     item.hiddenMediaUrls=[...hiddenUrls];
-     pages.push({...saved,index,playlistStart:result.start||start,playlistHasMore:result.hasMore===true,playlistHasMoreByStart:{...(saved.playlistHasMoreByStart||{}),[start]:result.hasMore===true},mediaWarning:result.mediaWarning||'',media,extracted:true});
-    }catch(error){
-     console.warn('Could not refresh saved media:',error);
-     pages.push({...saved,index,mediaWarning:'Some media could not be refreshed.'});
+  const fetchedPages=new Array(urls.length);
+  const hiddenUrls=new Set(item.hiddenMediaUrls||[]);
+  let hiddenUrlsChanged=false;
+  let nextIndex=0;
+  await Promise.all(Array.from({length:Math.min(3,urls.length)},async()=>{
+   while(nextIndex<urls.length){
+    const index=nextIndex++,url=urls[index];if(!url||!validUrl(url))continue;
+    if(groupedGallery){
+     const media=orderedMedia(item).map((entry,position)=>({...entry,type:entry.type||'image',sourceUrl:entry.sourceUrl||entry.url||'',position,pageIndex:0}));
+     fetchedPages[index]={...savedPages[0],url,title:item.title,index:0,extracted:true,media};
+     continue;
     }
-    continue;
+    const saved=savedPages.find(page=>normalized(page.url)===normalized(url));
+    if(saved?.playlistPaging){
+     const start=saved.playlistStart||1;
+     try{
+      const result=await previewUrl(url,{start});
+      const refreshedMedia=result.media.filter(media=>media.type==='video').map((media,position)=>({
+       ...media,
+       sourceUrl:media.sourceUrl||media.url,
+       position:start-1+position,
+       pageIndex:index
+      }));
+      const end=start-1+10;
+      const retainedMedia=(saved.media||[]).filter(media=>media.position<start-1||media.position>=end);
+      const refreshedByPosition=new Map(refreshedMedia.map(media=>[media.position,media]));
+      const media=[...retainedMedia,...Array.from(refreshedByPosition.values())].sort((a,b)=>a.position-b.position);
+      for(const oldMedia of (saved.media||[]).filter(media=>media.position>=start-1&&media.position<end)){
+       if(hiddenUrls.has(oldMedia.sourceUrl)){
+        hiddenUrls.delete(oldMedia.sourceUrl);
+        hiddenUrls.add(oldMedia.embedUrl||oldMedia.sourceUrl);
+        hiddenUrlsChanged=true;
+       }
+      }
+      fetchedPages[index]={...saved,index,playlistStart:result.start||start,playlistHasMore:result.hasMore===true,playlistHasMoreByStart:{...(saved.playlistHasMoreByStart||{}),[start]:result.hasMore===true},mediaWarning:result.mediaWarning||'',media,extracted:true};
+     }catch(error){
+      console.warn('Could not refresh saved media:',error);
+      fetchedPages[index]={...saved,index,mediaWarning:'Some media could not be refreshed.'};
+     }
+     continue;
+    }
+    if(saved?.extracted&&!saved.refetchOnOpen){fetchedPages[index]={...saved,index,media:(saved.media||[]).map(media=>({...media,type:media.type||'image',sourceUrl:media.sourceUrl||media.url||'',position:media.position||0,pageIndex:index}))};continue}
+    try{fetchedPages[index]={...await extractPageForWatch(url),index,extracted:true}}
+    catch(error){
+     const cachedMedia=saved?.media||[];
+     console.warn('Could not refresh a saved page:',error);
+     fetchedPages[index]={...saved,url,canonicalUrl:saved?.canonicalUrl||normalized(url),title:saved?.title||host(url),description:saved?.description||'',media:cachedMedia,index,extracted:cachedMedia.length>0,...(cachedMedia.length?{mediaWarning:'Some media could not be refreshed.'}:{error:'This page could not be previewed. You can still open the original link.'})};
+    }
    }
-   if(saved?.extracted&&!saved.refetchOnOpen){pages.push({...saved,index,media:(saved.media||[]).map(media=>({...media,type:media.type||'image',sourceUrl:media.sourceUrl||media.url||'',position:media.position||0,pageIndex:index}))});continue}
-   try{pages.push({...await extractPageForWatch(url),index,extracted:true})}
-   catch(error){
-    const cachedMedia=saved?.media||[];
-    console.warn('Could not refresh a saved page:',error);
-    pages.push({...saved,url,canonicalUrl:saved?.canonicalUrl||normalized(url),title:saved?.title||host(url),description:saved?.description||'',media:cachedMedia,index,extracted:cachedMedia.length>0,...(cachedMedia.length?{mediaWarning:'Some media could not be refreshed.'}:{error:'This page could not be previewed. You can still open the original link.'})});
-   }
-  }
+  }));
+  const pages=fetchedPages.filter(Boolean);
+  if(hiddenUrlsChanged)item.hiddenMediaUrls=[...hiddenUrls];
   if(localGallery){
    pages.push({url:'',title:item.title,description:item.description||'',index:0,extracted:true,media:orderedMedia(item).map((media,position)=>({...media,position,pageIndex:0}))});
   }
@@ -746,7 +752,7 @@ async function loadWatchPage(item){
   if(!item.thumbnailUrl||item.thumbnailUrl.startsWith('data:image/svg+xml,')||(item.hiddenMediaUrls||[]).includes(item.thumbnailUrl))item.thumbnailUrl=defaultThumbnail(item);
   item.updatedAt=new Date().toISOString();await storeItem(item);await refreshLibrary();
   if(V.watch?.itemId===item.id){V.watch.loading=false;renderWatchPage(false);if(item.sourcePages.some(page=>page.error))toast('Some URLs could not be previewed; use the URL controls to continue or retry.')}
- }catch(error){console.error('Could not load saved page media:',error);if(V.watch?.itemId===item.id){V.watch.loading=false;V.watch.retrying=true;renderWatchPage(false,'Could not load this page right now. Try again or open the original link.')}}
+ }catch(error){console.error('Could not load saved page media:',error);if(V.watch?.itemId===item.id){V.watch.loading=false;V.watch.retrying=true;renderWatchPage(false,'Could not load this page right now. Try again or open the original link.');toast('Could not load this page right now. Try again or open the original link.')}}
 }
 async function playVideoInGrabit(item,media,index){
  const watch=V.watch;if(!watch||watch.itemId!==item.id)return;
@@ -871,20 +877,19 @@ function renderWatchPage(pushScroll=false,message=''){
  const hasGallery=['gallery','playlist'].includes(item.type)||media.length>1;
  const backAction=active&&hasGallery?'showGrid':'back';
  const backTarget=active&&hasGallery?'media gallery':'library';
- const navigation=`<header class="watch-header"><button class="b watch-back-button" data-watch-action="${backAction}" aria-label="Back to ${backTarget}">${icon(icons.left)}<span>${active&&hasGallery?'Gallery':'Library'}</span></button><div class="watch-heading"><strong>${esc(item.title)}</strong><span>${pages.length>1?`URL ${watch.pageIndex+1} of ${pages.length} · `:''}${esc(pageTitle)}</span></div>${controls}</header>`;
+ const navigation=`<header class="watch-header"><button class="b watch-back-button" data-watch-action="${backAction}" aria-label="Back to ${backTarget}">${icon(icons.left)}${shouldShowGallery?'':`<span>${active&&hasGallery?'Gallery':'Library'}</span>`}</button><div class="watch-heading"><strong>${esc(item.title)}</strong>${shouldShowGallery?'':`<span>${pages.length>1?`URL ${watch.pageIndex+1} of ${pages.length} · `:''}${esc(pageTitle)}</span>`}</div>${controls}</header>`;
  let content='';
- if(message)content=`<div class="watch-message">${esc(message)}${item.sourceUrl?`<p><a href="${esc(item.sourceUrl)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p>`:''}<button class="b" data-watch-action="retry">Retry</button></div>`;
+ if(message)content=`<div class="watch-message"${shouldShowGallery?' role="status" aria-label="Gallery could not be loaded"':''}>${shouldShowGallery?'':esc(message)}${!shouldShowGallery&&item.sourceUrl?`<p><a href="${esc(item.sourceUrl)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p>`:''}<button class="b" data-watch-action="retry">Retry</button></div>`;
  else if(active&&!shouldShowGallery)content=`<div class="watch-stage" data-swipe><button class="b watch-arrow previous" data-watch-action="previousMedia" aria-label="Previous photo"${watch.mediaIndex===0?' disabled':''}>${icon(icons.left)}</button><div class="watch-stage-content">${activeHidden?`<span class="hidden-media-placeholder">${active.type==='video'?'Hidden video':'Hidden image'}</span>`:active.type==='video'&&active.playbackUrl?`<video data-watch-playback ${localVideoAttributes(active)} controls autoplay playsinline preload="metadata" poster="${esc(active.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(active))}">Video playback is unavailable in this browser.</video>`:active.embedUrl?`<iframe src="${esc(active.embedUrl)}" title="${esc(active.alt||pageTitle)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`:active.type==='video'?`<video ${localVideoAttributes(active)} controls autoplay playsinline preload="metadata" poster="${esc(active.thumbnailUrl||fallbackThumbnail('video'))}" src="${esc(mediaSource(active))}">Video playback is unavailable in this browser.</video>`:`<img class="watch-active-image${watch.mediaDirection==='next'?' slide-from-right':watch.mediaDirection==='previous'?' slide-from-left':''}" src="${esc(mediaSource(active))}" alt="${esc(active.alt||pageTitle)}">`}</div><button class="b watch-arrow next" data-watch-action="nextMedia" aria-label="Next photo"${watch.mediaIndex===media.length-1?' disabled':''}>${icon(icons.right)}</button></div><div class="watch-stage-caption"><span>${watch.mediaIndex+1} / ${media.length}</span>${activeHidden?`<button class="b" data-watch-hide="${esc(active.sourceUrl)}">Unhide ${active.type}</button>`:active.type==='image'?'':`${downloadButton(item,active)}${active.type==='video'&&(active.providerUrl||active.embedUrl)?`<button class="b" data-watch-action="resolveVideo">Try native player</button>`:''}<button class="b" data-watch-hide="${esc(active.sourceUrl)}">Hide ${active.type}</button>`}</div>`;
- else if(page.error&&!media.length)content=`<div class="watch-message">Could not load this URL: ${esc(page.error)}<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p><button class="b p" data-watch-action="resolveSourceVideo">Find and play video</button><button class="b" data-watch-action="retry">Retry</button></div>`;
- else if(media.length)content=`<div class="watch-page-info"><span>${esc(pageTitle)} · ${watch.showingHidden?`${hiddenMedia.length} hidden items`:`${feedMedia.length} items`}</span>${page.url?`<a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original</a>`:''}${!hasGallery&&!media.some(entry=>entry.type==='video')&&page.url?'<button class="b" data-watch-action="resolveSourceVideo">Find videos</button>':''}${hiddenMedia.length||watch.showingHidden?`<button class="watch-hidden-toggle" data-watch-action="${watch.showingHidden?'showGalleryFeed':'showHiddenMedia'}">${watch.showingHidden?'Back to gallery':`Hidden items (${hiddenMedia.length})`}</button>`:''}</div>${item.type==='playlist'?'':[page.mediaWarning,page.previewWarning,page.truncated?'Only the first 500 media items are shown.':''].filter(Boolean).map(warning=>`<p class="hint" role="status">${esc(warning)}</p>`).join('')}${displayedMedia.length?`<div class="watch-grid">${displayedMedia.map(({entry,index})=>watchMediaTile(item,entry,index)).join('')}</div>`:`<div class="watch-message">${watch.showingHidden?'There are no hidden media on this URL.':'No visible media. Open Hidden items to manage them.'}</div>`}`;
- else content=`<div class="watch-message">${esc(message||'No images or videos were found on this page.')}${page.url?`<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p><button class="b p" data-watch-action="resolveSourceVideo">Find and play video</button>`:''}</div>`;
+ else if(watch.loading&&!active&&!media.length)content='<div class="watch-loading" role="status" aria-label="Loading gallery"><span></span></div>';
+ else if(page.error&&!media.length)content=`<div class="watch-message"${shouldShowGallery?' role="status" aria-label="Could not load this page"':''}>${shouldShowGallery?'':`Could not load this URL: ${esc(page.error)}<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p>`}<button class="b p" data-watch-action="resolveSourceVideo">Find and play video</button><button class="b" data-watch-action="retry">Retry</button></div>`;
+ else if(media.length)content=`${shouldShowGallery?'':`<div class="watch-page-info"><span>${esc(pageTitle)} · ${watch.showingHidden?`${hiddenMedia.length} hidden items`:`${feedMedia.length} items`}</span>${page.url?`<a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original</a>`:''}${!hasGallery&&!media.some(entry=>entry.type==='video')&&page.url?'<button class="b" data-watch-action="resolveSourceVideo">Find videos</button>':''}</div>`}${hiddenMedia.length||watch.showingHidden?`<div class="watch-page-info"><button class="watch-hidden-toggle" data-watch-action="${watch.showingHidden?'showGalleryFeed':'showHiddenMedia'}" aria-label="${watch.showingHidden?'Back to gallery':`Show ${hiddenMedia.length} hidden items`}" title="${watch.showingHidden?'Back to gallery':`Show ${hiddenMedia.length} hidden items`}">${icon(watch.showingHidden?icons.left:icons.hide)}</button></div>`:''}${shouldShowGallery?'':[page.mediaWarning,page.previewWarning,page.truncated?'Only the first 500 media items are shown.':''].filter(Boolean).map(warning=>`<p class="hint" role="status">${esc(warning)}</p>`).join('')}${displayedMedia.length?`<div class="watch-grid">${displayedMedia.map(({entry,index})=>watchMediaTile(item,entry,index)).join('')}</div>`:`<div class="watch-message" role="status" aria-label="${watch.showingHidden?'No hidden media':'No visible media'}"></div>`}`;
+ else content=`<div class="watch-message"${shouldShowGallery?' role="status" aria-label="No images or videos were found"':''}>${shouldShowGallery?'':esc(message||'No images or videos were found on this page.')}${!shouldShowGallery&&page.url?`<p><a href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Open original webpage</a></p><button class="b p" data-watch-action="resolveSourceVideo">Find and play video</button>`:''}</div>`;
  delete watch.mediaDirection;
  V.watchResizeObserver?.disconnect();V.watchResizeObserver=null;
  const viewerBackdrop=active?.type==='image'&&!activeHidden?`<img class="watch-viewer-backdrop" src="${esc(mediaSource(active))}" alt="" aria-hidden="true">`:'';
  main.innerHTML=`${viewerBackdrop}${navigation}<div class="watch-content${active?' focused-media-view':''}">${content}</div>`;
  main.querySelectorAll('iframe, video').forEach(player=>{player.referrerPolicy='strict-origin-when-cross-origin'});
- const pageInfo=main.querySelector('.watch-page-info > span');
- if(page.playlistPaging&&pageInfo)pageInfo.textContent=`${pageTitle} · Videos ${page.playlistStart}–${page.playlistStart+media.length-1} · ${watch.showingHidden?`${hiddenMedia.length} hidden items`:`${feedMedia.length} items`}`;
  const watchHeader=main.querySelector('.watch-header');
  if(watchHeader){watchHeader.classList.toggle('header-hidden',!active&&!!watch.headerHidden);main.style.setProperty('--watch-header-height',`${watchHeader.offsetHeight}px`)}
  const watchGrid=main.querySelector('.watch-grid');
